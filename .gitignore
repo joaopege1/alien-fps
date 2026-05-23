@@ -1,0 +1,16 @@
+# build artifacts
+*.o
+main
+
+# OS files
+.DS_Store
+
+# backups
+*.bak
+map.bmp.backup_maze
+
+# runtime save data
+scores.txt
+
+# claude code session data
+.claude
