@@ -85,6 +85,9 @@ class Renderer
         GLint u_wall_ambient;
         GLint u_wall_cone_cos;
         GLint u_wall_light_range;
+        GLint u_wall_cam_pos;
+        GLint u_wall_fog_color;
+        GLint u_wall_fog_density;
 
         //--- 3D floor (solid color) ---
         GLuint solid3d_program;
@@ -99,6 +102,9 @@ class Renderer
         GLint u_floor_ambient;
         GLint u_floor_cone_cos;
         GLint u_floor_light_range;
+        GLint u_floor_cam_pos;
+        GLint u_floor_fog_color;
+        GLint u_floor_fog_density;
 
         //--- 3D sprites (billboard, chroma-keyed) ---
         GLuint sprite3d_program;
@@ -111,6 +117,9 @@ class Renderer
         GLint u_sprite_ambient;
         GLint u_sprite_cone_cos;
         GLint u_sprite_light_range;
+        GLint u_sprite3d_cam_pos;
+        GLint u_sprite3d_fog_color;
+        GLint u_sprite3d_fog_density;
 
         //--- sky (full-screen gradient) ---
         GLuint sky_program;
@@ -124,6 +133,9 @@ class Renderer
         GLint u_alien_view;
         GLint u_alien_proj;
         GLint u_alien_light_dir;
+        GLint u_alien_cam_pos;
+        GLint u_alien_fog_color;
+        GLint u_alien_fog_density;
         Mesh alien_body_mesh_a;  //leg phase 0 (right leg forward)
         Mesh alien_body_mesh_b;  //leg phase 1 (left leg forward)
         Mesh alien_head_mesh;    //head + neck, twists independently of body
@@ -134,6 +146,7 @@ class Renderer
         Mesh barn_mesh;
         Mesh fence_mesh;
         Mesh grass_mesh;
+        Mesh beam_mesh;
 
         //--- 2D pipeline ---
         GLuint sprite_program;

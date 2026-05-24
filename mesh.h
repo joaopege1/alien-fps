@@ -39,5 +39,6 @@ void build_cow(Mesh& m);
 void build_barn(Mesh& m);
 void build_fence_section(Mesh& m);
 void build_grass_tuft(Mesh& m);
+void build_light_beam(Mesh& m);
 
 #endif

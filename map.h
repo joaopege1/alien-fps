@@ -51,21 +51,28 @@ struct Door
 };
 
 //world props (3D meshes), drawn by the renderer and queried for collision
-enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass };
+enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass, PropBeam };
 
 struct Prop
 {
-	float x = 0, z = 0;     //world position
-	float yaw = 0;          //rotation around Y
+	mutable float x = 0, z = 0;  //world position (mutable so cows can wander)
+	mutable float yaw = 0;       //rotation around Y (mutable so cows can face their walk direction)
 	PropType type = PropGrass;
-	float half_w = 0;       //AABB half-extent on X (in world space, post-rotation we just use circular approx)
-	float half_d = 0;       //AABB half-extent on Z
-	bool solid = false;     //blocks player movement
-	mutable bool active = true; //mutable so update_sprites can mark a cow as abducted
+	float half_w = 0;            //AABB half-extent on X
+	float half_d = 0;            //AABB half-extent on Z
+	bool solid = false;          //blocks player movement
+	mutable bool active = true;  //flipped off by abduction / fence break / beam expiry
+	mutable Uint32 expire_at = 0; //SDL ticks ms; 0 = permanent. used for short-lived beam visuals
+	mutable float damage_timer = 0; //seconds an alien has been pressing on this prop (fence only)
+	//cow wander state (cows only)
+	mutable float wander_x = 0, wander_y = 0;
+	mutable bool wander_init = false;
 
 	Prop() {}
 	Prop(float ix, float iz, float iyaw, PropType t, float hw, float hd, bool s)
-		: x(ix), z(iz), yaw(iyaw), type(t), half_w(hw), half_d(hd), solid(s), active(true) {}
+		: x(ix), z(iz), yaw(iyaw), type(t), half_w(hw), half_d(hd), solid(s),
+		  active(true), expire_at(0), damage_timer(0),
+		  wander_x(0), wander_y(0), wander_init(false) {}
 };
 
 class Map

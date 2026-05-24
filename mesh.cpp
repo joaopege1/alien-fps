@@ -266,3 +266,15 @@ void build_grass_tuft(Mesh& m)
     add_box(m, glm::vec3(0.0f, 0.18f, 0.0f), glm::vec3(0.05f, 0.36f, 0.02f), GRASS);
     add_box(m, glm::vec3(0.0f, 0.18f, 0.0f), glm::vec3(0.02f, 0.36f, 0.05f), GRASS);
 }
+
+void build_light_beam(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 BEAM_BRIGHT(0.45f, 1.00f, 0.55f); //saturated alien green
+    const glm::vec3 BEAM_CORE  (0.85f, 1.00f, 0.85f); //inner near-white glow
+
+    //tall vertical pillar reaching well above the cow into the sky
+    add_box(m, glm::vec3(0.0f, 2.20f, 0.0f), glm::vec3(0.55f, 4.40f, 0.55f), BEAM_BRIGHT);
+    //inner brighter core
+    add_box(m, glm::vec3(0.0f, 2.20f, 0.0f), glm::vec3(0.20f, 4.40f, 0.20f), BEAM_CORE);
+}

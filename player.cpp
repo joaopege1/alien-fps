@@ -3,7 +3,10 @@
 #include "player.h"
  
 Player::Player(Map* ma, Menu* me) : display_flash(false), health(100), key_count(0), turkey_destruct(false), wall_destruct(false),
-    hurt_sound(false), key_sound(false), x(3), y(3), angle(0), pitch(0), turn(0), walk_x(0), walk_y(0), pressed_keys(NULL), map(ma), menu(me)
+    hurt_sound(false), key_sound(false),
+    //spawn 10% in from the corner regardless of map size so the player has the farm in view
+    x(ma->w * 0.10f), y(ma->h * 0.10f),
+    angle(0), pitch(0), turn(0), walk_x(0), walk_y(0), pressed_keys(NULL), map(ma), menu(me)
 {
     pressed_keys = new bool[7];
     for(int i = 0; i < 7; i++)

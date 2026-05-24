@@ -20,19 +20,29 @@ layout(location = 1) in vec2 a_uv;
 uniform mat4 u_view;
 uniform mat4 u_proj;
 out vec2 v_uv;
+out vec3 v_world_pos;
 void main() {
     gl_Position = u_proj * u_view * vec4(a_pos, 1.0);
     v_uv = a_uv;
+    v_world_pos = a_pos;
 }
 )";
 
 static const char* wall_fragment_src = R"(
 #version 330 core
 in vec2 v_uv;
+in vec3 v_world_pos;
 uniform sampler2D u_tex;
+uniform vec3 u_cam_pos;
+uniform vec3 u_fog_color;
+uniform float u_fog_density;
 out vec4 frag_color;
 void main() {
-    frag_color = texture(u_tex, v_uv);
+    vec3 c = texture(u_tex, v_uv).rgb;
+    float d = length(v_world_pos - u_cam_pos);
+    float fog = 1.0 - exp(-d * u_fog_density);
+    c = mix(c, u_fog_color, clamp(fog, 0.0, 1.0));
+    frag_color = vec4(c, 1.0);
 }
 )";
 
@@ -43,21 +53,30 @@ layout(location = 1) in vec2 a_uv;
 uniform mat4 u_view;
 uniform mat4 u_proj;
 out vec2 v_uv;
+out vec3 v_world_pos;
 void main() {
     gl_Position = u_proj * u_view * vec4(a_pos, 1.0);
     v_uv = a_uv;
+    v_world_pos = a_pos;
 }
 )";
 
 static const char* sprite3d_fragment_src = R"(
 #version 330 core
 in vec2 v_uv;
+in vec3 v_world_pos;
 uniform sampler2D u_tex;
+uniform vec3 u_cam_pos;
+uniform vec3 u_fog_color;
+uniform float u_fog_density;
 out vec4 frag_color;
 void main() {
     vec4 c = texture(u_tex, v_uv);
     if(c.r < 0.05 && c.g > 0.9 && c.b > 0.9) discard;
-    frag_color = c;
+    float d = length(v_world_pos - u_cam_pos);
+    float fog = 1.0 - exp(-d * u_fog_density);
+    vec3 col = mix(c.rgb, u_fog_color, clamp(fog, 0.0, 1.0));
+    frag_color = vec4(col, c.a);
 }
 )";
 
@@ -77,6 +96,9 @@ static const char* solid3d_fragment_src = R"(
 #version 330 core
 in vec3 v_world_pos;
 uniform vec4 u_color;
+uniform vec3 u_cam_pos;
+uniform vec3 u_fog_color;
+uniform float u_fog_density;
 out vec4 frag_color;
 
 float hash(vec2 p) {
@@ -110,7 +132,11 @@ void main() {
         c = mix(dirt, c, n / 0.18);
     }
 
-    //u_color acts as a tint/brightness modifier (kept for compatibility)
+    //distance fog
+    float d = length(v_world_pos - u_cam_pos);
+    float fog = 1.0 - exp(-d * u_fog_density);
+    c = mix(c, u_fog_color, clamp(fog, 0.0, 1.0));
+
     frag_color = vec4(c, 1.0);
 }
 )";
@@ -157,10 +183,13 @@ uniform mat4 u_view;
 uniform mat4 u_proj;
 out vec3 v_normal;
 out vec3 v_color;
+out vec3 v_world_pos;
 void main() {
-    gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0);
+    vec4 world = u_model * vec4(a_pos, 1.0);
+    gl_Position = u_proj * u_view * world;
     v_normal = mat3(u_model) * a_normal;
     v_color = a_color;
+    v_world_pos = world.xyz;
 }
 )";
 
@@ -168,14 +197,23 @@ static const char* alien_fragment_src = R"(
 #version 330 core
 in vec3 v_normal;
 in vec3 v_color;
+in vec3 v_world_pos;
 uniform vec3 u_light_dir; //direction light travels (not "to light")
+uniform vec3 u_cam_pos;
+uniform vec3 u_fog_color;
+uniform float u_fog_density;
 out vec4 frag_color;
 void main() {
     vec3 n = normalize(v_normal);
     float ndl = max(dot(n, -normalize(u_light_dir)), 0.0);
     float light = 0.32 + ndl * 0.68;
     vec3 moonlight_tint = vec3(0.78, 0.86, 1.08);
-    frag_color = vec4(v_color * light * moonlight_tint, 1.0);
+    vec3 col = v_color * light * moonlight_tint;
+    //distance fog
+    float d = length(v_world_pos - u_cam_pos);
+    float fog = 1.0 - exp(-d * u_fog_density);
+    col = mix(col, u_fog_color, clamp(fog, 0.0, 1.0));
+    frag_color = vec4(col, 1.0);
 }
 )";
 
@@ -236,19 +274,23 @@ Renderer::Renderer(Player* p, Map* ma, Menu* me)
       wall_texture(0), wall_tile_count(0), u_view_loc(-1), u_proj_loc(-1),
       u_wall_light_pos(-1), u_wall_light_dir(-1), u_wall_ambient(-1),
       u_wall_cone_cos(-1), u_wall_light_range(-1),
+      u_wall_cam_pos(-1), u_wall_fog_color(-1), u_wall_fog_density(-1),
       solid3d_program(0), floor_vao(0), floor_vbo(0), floor_vertex_count(0),
       u_solid3d_view(-1), u_solid3d_proj(-1), u_solid3d_color(-1),
       u_floor_light_pos(-1), u_floor_light_dir(-1), u_floor_ambient(-1),
       u_floor_cone_cos(-1), u_floor_light_range(-1),
+      u_floor_cam_pos(-1), u_floor_fog_color(-1), u_floor_fog_density(-1),
       sprite3d_program(0), sprite3d_vao(0), sprite3d_vbo(0),
       u_sprite3d_view(-1), u_sprite3d_proj(-1),
       u_sprite_light_pos(-1), u_sprite_light_dir(-1), u_sprite_ambient(-1),
       u_sprite_cone_cos(-1), u_sprite_light_range(-1),
+      u_sprite3d_cam_pos(-1), u_sprite3d_fog_color(-1), u_sprite3d_fog_density(-1),
       sky_program(0), sky_vao(0), sky_vbo(0), u_sky_pitch(-1),
       alien_program(0), u_alien_model(-1), u_alien_view(-1),
       u_alien_proj(-1), u_alien_light_dir(-1),
+      u_alien_cam_pos(-1), u_alien_fog_color(-1), u_alien_fog_density(-1),
       alien_body_mesh_a(), alien_body_mesh_b(), alien_head_mesh(),
-      tree_mesh(), cow_mesh(), barn_mesh(), fence_mesh(), grass_mesh(),
+      tree_mesh(), cow_mesh(), barn_mesh(), fence_mesh(), grass_mesh(), beam_mesh(),
       sprite_program(0), solid_program(0), quad_vao(0), quad_vbo(0),
       sprites_texture(0), sprites_tile_count(0),
       u_sprite_model(-1), u_sprite_proj(-1), u_sprite_uvrect(-1),
@@ -322,6 +364,9 @@ bool Renderer::init_gl_resources()
         u_wall_ambient     = glGetUniformLocation(wall_program, "u_ambient");
         u_wall_cone_cos    = glGetUniformLocation(wall_program, "u_cone_cos");
         u_wall_light_range = glGetUniformLocation(wall_program, "u_light_range");
+        u_wall_cam_pos     = glGetUniformLocation(wall_program, "u_cam_pos");
+        u_wall_fog_color   = glGetUniformLocation(wall_program, "u_fog_color");
+        u_wall_fog_density = glGetUniformLocation(wall_program, "u_fog_density");
     }
 
     wall_texture = load_bmp_texture("walltext.bmp", &wall_tile_count);
@@ -352,6 +397,9 @@ bool Renderer::init_alien_resources()
     u_alien_view      = glGetUniformLocation(alien_program, "u_view");
     u_alien_proj      = glGetUniformLocation(alien_program, "u_proj");
     u_alien_light_dir = glGetUniformLocation(alien_program, "u_light_dir");
+    u_alien_cam_pos   = glGetUniformLocation(alien_program, "u_cam_pos");
+    u_alien_fog_color = glGetUniformLocation(alien_program, "u_fog_color");
+    u_alien_fog_density = glGetUniformLocation(alien_program, "u_fog_density");
 
     //body has two walking poses; head is a single mesh that twists independently
     build_alien_body(alien_body_mesh_a, 0.0f);
@@ -367,6 +415,7 @@ bool Renderer::init_alien_resources()
     build_barn(barn_mesh);          barn_mesh.upload();
     build_fence_section(fence_mesh);fence_mesh.upload();
     build_grass_tuft(grass_mesh);   grass_mesh.upload();
+    build_light_beam(beam_mesh);    beam_mesh.upload();
 
     std::cout << "alien body verts: " << alien_body_mesh_a.vertex_count
               << ", head: " << alien_head_mesh.vertex_count
@@ -394,6 +443,9 @@ bool Renderer::init_3d_extras()
         u_floor_ambient     = glGetUniformLocation(solid3d_program, "u_ambient");
         u_floor_cone_cos    = glGetUniformLocation(solid3d_program, "u_cone_cos");
         u_floor_light_range = glGetUniformLocation(solid3d_program, "u_light_range");
+        u_floor_cam_pos     = glGetUniformLocation(solid3d_program, "u_cam_pos");
+        u_floor_fog_color   = glGetUniformLocation(solid3d_program, "u_fog_color");
+        u_floor_fog_density = glGetUniformLocation(solid3d_program, "u_fog_density");
     }
     build_floor_mesh();
 
@@ -412,6 +464,9 @@ bool Renderer::init_3d_extras()
         u_sprite_ambient     = glGetUniformLocation(sprite3d_program, "u_ambient");
         u_sprite_cone_cos    = glGetUniformLocation(sprite3d_program, "u_cone_cos");
         u_sprite_light_range = glGetUniformLocation(sprite3d_program, "u_light_range");
+        u_sprite3d_cam_pos   = glGetUniformLocation(sprite3d_program, "u_cam_pos");
+        u_sprite3d_fog_color = glGetUniformLocation(sprite3d_program, "u_fog_color");
+        u_sprite3d_fog_density = glGetUniformLocation(sprite3d_program, "u_fog_density");
     }
     glGenVertexArrays(1, &sprite3d_vao);
     glGenBuffers(1, &sprite3d_vbo);
@@ -826,6 +881,7 @@ void Renderer::draw_decorations(const glm::mat4& view, const glm::mat4& proj)
             case PropFence: m = &fence_mesh; break;
             case PropTree:  m = &tree_mesh;  break;
             case PropGrass: m = &grass_mesh; break;
+            case PropBeam:  m = &beam_mesh;  break;
         }
         if(!m) continue;
         glBindVertexArray(m->vao);
@@ -1022,11 +1078,18 @@ void Renderer::draw(uint fps)
     glm::mat4 view = glm::lookAt(cam_pos, cam_pos + forward, up_vec);
     glm::mat4 proj = glm::perspective(fov, (float)screen_w / (float)screen_h, 0.05f, 200.0f);
 
+    //shared fog parameters for all 3D shaders
+    const glm::vec3 fog_color(0.08f, 0.10f, 0.16f); //matches the sky horizon
+    const float fog_density = 0.035f;
+
     //floor
     glUseProgram(solid3d_program);
     glUniformMatrix4fv(u_solid3d_view, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(u_solid3d_proj, 1, GL_FALSE, glm::value_ptr(proj));
     glUniform4f(u_solid3d_color, 0.10f, 0.13f, 0.09f, 1.0f); //dark night grass
+    glUniform3f(u_floor_cam_pos, cam_pos.x, cam_pos.y, cam_pos.z);
+    glUniform3f(u_floor_fog_color, fog_color.r, fog_color.g, fog_color.b);
+    glUniform1f(u_floor_fog_density, fog_density);
     glBindVertexArray(floor_vao);
     glDrawArrays(GL_TRIANGLES, 0, floor_vertex_count);
     glBindVertexArray(0);
@@ -1035,11 +1098,25 @@ void Renderer::draw(uint fps)
     glUseProgram(wall_program);
     glUniformMatrix4fv(u_view_loc, 1, GL_FALSE, glm::value_ptr(view));
     glUniformMatrix4fv(u_proj_loc, 1, GL_FALSE, glm::value_ptr(proj));
+    glUniform3f(u_wall_cam_pos, cam_pos.x, cam_pos.y, cam_pos.z);
+    glUniform3f(u_wall_fog_color, fog_color.r, fog_color.g, fog_color.b);
+    glUniform1f(u_wall_fog_density, fog_density);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, wall_texture);
     glBindVertexArray(wall_vao);
     glDrawArrays(GL_TRIANGLES, 0, wall_vertex_count);
     glBindVertexArray(0);
+
+    //prep fog uniforms on sprite3d/alien programs once so the per-prop helpers don't need to know
+    glUseProgram(sprite3d_program);
+    glUniform3f(u_sprite3d_cam_pos, cam_pos.x, cam_pos.y, cam_pos.z);
+    glUniform3f(u_sprite3d_fog_color, fog_color.r, fog_color.g, fog_color.b);
+    glUniform1f(u_sprite3d_fog_density, fog_density);
+
+    glUseProgram(alien_program);
+    glUniform3f(u_alien_cam_pos, cam_pos.x, cam_pos.y, cam_pos.z);
+    glUniform3f(u_alien_fog_color, fog_color.r, fog_color.g, fog_color.b);
+    glUniform1f(u_alien_fog_density, fog_density);
 
     //world props (trees, cows, barn, fence, grass)
     draw_decorations(view, proj);

@@ -22,11 +22,10 @@ Map::Map() : speed(1.2), damage(0), enemy_count(0), map(NULL), dist(NULL),
         return;
     }
 
-    //TODO : Fix this issue
-    //temporary workaround because map sizes other than 32x32 causes crashes
-    if(map_tex->w != 32 || map_tex->h != 32)
+    //sanity check on map size (square, reasonable bounds)
+    if(map_tex->w != map_tex->h || map_tex->w < 16 || map_tex->w > 256)
     {
-    	std::cerr << "Map must be 32x32." << std::endl;
+        std::cerr << "Map must be square between 16x16 and 256x256." << std::endl;
         return;
     }
 
@@ -128,15 +127,29 @@ int Map::get_cow_count() const
 void Map::spawn_alien_at_edge()
 {
 	//pick a random edge of the playable area; sit just inside the border so we don't
-	//immediately clamp the alien on its first move
-	int edge = std::rand() % 4;
+	//immediately clamp the alien on its first move. retry a few times if we'd land on
+	//top of another alien.
+	const float alien_min_gap_sqr = 1.0f * 1.0f;
 	float sx = 0.0f, sy = 0.0f;
-	switch(edge)
+	bool ok = false;
+	for(int tries = 0; tries < 20 && !ok; tries++)
 	{
-		case 0: sx = 1.0f + (std::rand() % (w - 2)); sy = 0.8f;          break; //N
-		case 1: sx = 1.0f + (std::rand() % (w - 2)); sy = (float)h - 0.8f; break; //S
-		case 2: sx = 0.8f;          sy = 1.0f + (std::rand() % (h - 2)); break; //W
-		case 3: sx = (float)w - 0.8f; sy = 1.0f + (std::rand() % (h - 2)); break; //E
+		int edge = std::rand() % 4;
+		switch(edge)
+		{
+			case 0: sx = 1.0f + (std::rand() % (w - 2)); sy = 0.8f;          break; //N
+			case 1: sx = 1.0f + (std::rand() % (w - 2)); sy = (float)h - 0.8f; break; //S
+			case 2: sx = 0.8f;          sy = 1.0f + (std::rand() % (h - 2)); break; //W
+			case 3: sx = (float)w - 0.8f; sy = 1.0f + (std::rand() % (h - 2)); break; //E
+		}
+		ok = true;
+		for(unsigned int j = 0; j < sprites.size(); j++)
+		{
+			if(sprites[j].type != Enemy) continue;
+			float dx = sprites[j].x - sx;
+			float dz = sprites[j].y - sy;
+			if(dx * dx + dz * dz < alien_min_gap_sqr) { ok = false; break; }
+		}
 	}
 
 	sprites.push_back(Sprite());
@@ -181,13 +194,16 @@ void Map::populate_farm()
 	spawned_count  = 0;
 	next_spawn_in  = 3.0f;
 
-	//--- the farm (north-east area of the 32x32 field) ---
+	//--- the farm (near center of the field so the player can reach it from spawn) ---
+	float fcx = w * 0.5f; //farm center x
+	float fcz = h * 0.45f; //slightly north of center
+
 	//barn footprint matches the mesh: 7 wide x 9 deep
-	float barn_x = 22.0f, barn_z = 7.0f;
+	float barn_x = fcx, barn_z = fcz - 6.0f;
 	props.push_back(Prop(barn_x, barn_z, 0.0f, PropBarn, 3.5f, 4.5f, true));
 
 	//cow pen: a fenced rectangle south of the barn
-	float pen_cx = 22.0f, pen_cz = 18.0f;
+	float pen_cx = fcx, pen_cz = fcz + 5.0f;
 	float pen_w = 9.0f, pen_d = 7.0f;
 	//fence sections along the 4 edges (each section is 1m wide; we tile them)
 	int n_x = (int)pen_w; //~5 sections along X
@@ -211,64 +227,83 @@ void Map::populate_farm()
 		props.push_back(Prop(right, fz, (float)M_PI * 0.5f, PropFence, 0.06f, 0.5f, true));
 	}
 
-	//6 cows inside the pen, randomly placed
+	//6 cows inside the pen, randomly placed without overlapping each other
+	const float cow_min_gap_sqr = 1.4f * 1.4f;
 	for(int i = 0; i < 6; i++)
 	{
-		float cx = pen_cx + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_w - 1.2f);
-		float cz = pen_cz + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_d - 1.2f);
+		float cx = 0, cz = 0;
+		bool ok = false;
+		for(int tries = 0; tries < 40 && !ok; tries++)
+		{
+			cx = pen_cx + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_w - 1.2f);
+			cz = pen_cz + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_d - 1.2f);
+			ok = true;
+			for(unsigned int j = 0; j < props.size(); j++)
+			{
+				if(props[j].type != PropCow) continue;
+				float dx = props[j].x - cx;
+				float dz = props[j].z - cz;
+				if(dx * dx + dz * dz < cow_min_gap_sqr) { ok = false; break; }
+			}
+		}
 		float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
 		props.push_back(Prop(cx, cz, yaw, PropCow, 0.38f, 0.68f, true));
 	}
 
-	//--- trees scattered around the perimeter (avoid spawn at (3,3) and farm) ---
-	const int n_trees = 35;
+	//--- trees scattered across the field (avoid spawn and farm zones) ---
+	//density ~0.034 trees per square unit, same as the original 32x32 setup
+	const int n_trees = (int)(0.034f * w * h);
+	const float spawn_x = w * 0.10f;
+	const float spawn_z = h * 0.10f;
+	const float farm_radius_sqr  = 16.0f * 16.0f; //wider exclusion since farm is now central
+	const float spawn_radius_sqr = 6.0f * 6.0f;
 	for(int i = 0; i < n_trees; i++)
 	{
-		//bias toward outer ring of the map
 		float tx, tz;
 		int tries = 0;
 		do {
-			tx = (std::rand() % 31) + 0.5f;
-			tz = (std::rand() % 31) + 0.5f;
-			//distance from farm center (barn + pen span roughly z=3..21, x=18..27)
-			float dx_farm = tx - 22.0f, dz_farm = tz - 13.0f;
-			float dx_spawn = tx - 3.0f, dz_spawn = tz - 3.0f;
-			bool near_farm  = (dx_farm * dx_farm + dz_farm * dz_farm) < 100.0f; //r=10
-			bool near_spawn = (dx_spawn * dx_spawn + dz_spawn * dz_spawn) < 12.0f;
+			tx = (std::rand() % (w - 1)) + 0.5f;
+			tz = (std::rand() % (h - 1)) + 0.5f;
+			float dx_farm = tx - fcx,    dz_farm = tz - fcz;
+			float dx_spawn = tx - spawn_x, dz_spawn = tz - spawn_z;
+			bool near_farm  = (dx_farm  * dx_farm  + dz_farm  * dz_farm)  < farm_radius_sqr;
+			bool near_spawn = (dx_spawn * dx_spawn + dz_spawn * dz_spawn) < spawn_radius_sqr;
 			if(!near_farm && !near_spawn) break;
 		} while(++tries < 20);
 		float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
 		props.push_back(Prop(tx, tz, yaw, PropTree, 0.35f, 0.35f, true));
 	}
 
-	//--- distant forest: 3 dense rings of trees beyond the playable 32x32 area ---
+	//--- distant forest: 3 dense rings of trees beyond the playable area ---
 	//non-solid because the player cannot reach them (boundary already blocks at edges)
+	float ring_cx = w * 0.5f, ring_cz = h * 0.5f;
+	float base_r  = w * 0.55f;
 	for(int ring = 0; ring < 3; ring++)
 	{
-		float r_min = 38.0f + ring * 7.0f;
-		float r_max = r_min + 6.0f;
-		int count = 70 - ring * 15; //inner ring has more, outer rings fewer
+		float r_min = base_r + ring * 9.0f;
+		float r_max = r_min + 8.0f;
+		int count = 160 - ring * 35; //inner ring densest
 		for(int i = 0; i < count; i++)
 		{
 			float ang = (std::rand() % 36000) / 36000.0f * 2.0f * (float)M_PI;
 			float r = r_min + ((std::rand() % 100) / 100.0f) * (r_max - r_min);
-			float tx = 16.0f + cosf(ang) * r;
-			float tz = 16.0f + sinf(ang) * r;
+			float tx = ring_cx + cosf(ang) * r;
+			float tz = ring_cz + sinf(ang) * r;
 			float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
 			props.push_back(Prop(tx, tz, yaw, PropTree, 0.0f, 0.0f, false));
 		}
 	}
 
 	//--- tall grass tufts everywhere except inside the cow pen and right at spawn ---
-	const int n_grass = 220;
+	const int n_grass = (int)(0.215f * w * h); //same density as 32x32
 	for(int i = 0; i < n_grass; i++)
 	{
-		float gx = (std::rand() % 3100) / 100.0f + 0.5f;
-		float gz = (std::rand() % 3100) / 100.0f + 0.5f;
+		float gx = (std::rand() % (w * 100 - 100)) / 100.0f + 0.5f;
+		float gz = (std::rand() % (h * 100 - 100)) / 100.0f + 0.5f;
 		//skip inside cow pen
 		if(gx > left && gx < right && gz > top && gz < bottom) continue;
 		//skip spawn area
-		float dxs = gx - 3.0f, dzs = gz - 3.0f;
+		float dxs = gx - spawn_x, dzs = gz - spawn_z;
 		if(dxs * dxs + dzs * dzs < 4.0f) continue;
 		float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
 		props.push_back(Prop(gx, gz, yaw, PropGrass, 0.0f, 0.0f, false));
@@ -330,17 +365,17 @@ bool Map::update_doors(float player_x, float player_y, float dt)
 
 void Map::sort_sprites(float player_x, float player_y)
 {
-	if(sprites.size() < 2)
-		return;
-
-	for(unsigned int i = sprites.size() - 1; i > 0; i--)
+	//update sqr_dist for ALL sprites including index 0 (otherwise the very first
+	//spawned alien keeps its constructor default 0, which trips the damage check)
+	for(int i = (int)sprites.size() - 1; i >= 0; i--)
 	{
 		sprites.at(i).sqr_dist = pow(player_x - sprites.at(i).x, 2) + pow(player_y - sprites.at(i).y, 2);
 
 		if(sprites.at(i).type == Temporary && sprites.at(i).start_time + 500 < SDL_GetTicks())
 			delete_sprite(i);
 	}
-	std::sort(sprites.begin(), sprites.end());
+	if(sprites.size() >= 2)
+		std::sort(sprites.begin(), sprites.end());
 }
 
 int Map::damage_player()
@@ -427,7 +462,7 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 		}
 	}
 
-	const float abduct_dist_sqr = 0.55f * 0.55f; //alien close enough to "grab" a cow
+	const float abduct_dist_sqr = 1.6f * 1.6f; //alien close enough to suck the cow up with the beam (over the fence)
 
 	//collected during the main loop, applied after so we don't mutate sprites/props mid-iter
 	std::vector<unsigned int> aliens_to_remove;
@@ -511,8 +546,12 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 				if(aligned && d_target > stop_dist)
 				{
 					float step = speed * dt;
-					s.x += (dx / d_target) * step;
-					s.y += (dz / d_target) * step;
+					float nx = s.x + (dx / d_target) * step;
+					float ny = s.y + (dz / d_target) * step;
+					//aliens now respect fences/barn/trees - they'll pile up at the pen
+					//(small radius so they can squeeze close enough for the beam)
+					if(!is_blocked(nx, s.y, 0.18f)) s.x = nx;
+					if(!is_blocked(s.x, ny, 0.18f)) s.y = ny;
 				}
 			}
 
@@ -529,15 +568,106 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 	}
 
 	//--- apply abductions after the loop so we don't shift indices mid-iteration ---
-	//drop a temp explosion sprite at each cow's last position
+	//spawn a brief green light pillar over each abducted cow
+	Uint32 beam_end = SDL_GetTicks() + 800;
 	for(unsigned int k = 0; k < abduction_x.size(); k++)
-		add_temp_sprite(7, abduction_x[k], abduction_y[k], 900);
+	{
+		Prop beam(abduction_x[k], abduction_y[k], 0.0f, PropBeam, 0.0f, 0.0f, false);
+		beam.expire_at = beam_end;
+		props.push_back(beam);
+	}
 
 	//erase consumed aliens in descending order so earlier indices stay valid
 	for(int k = (int)aliens_to_remove.size() - 1; k >= 0; k--)
 	{
 		delete_sprite(aliens_to_remove[k]);
 		enemy_count--;
+	}
+
+	//tick prop expirations (currently only beams have lifetimes)
+	Uint32 now = SDL_GetTicks();
+	for(unsigned int i = 0; i < props.size(); i++)
+	{
+		const Prop& p = props[i];
+		if(p.active && p.expire_at != 0 && now >= p.expire_at)
+			p.active = false;
+	}
+
+	//--- fence break: each fence section accumulates damage while an alien is pressing on it ---
+	const float fence_touch_sqr = 0.55f * 0.55f; //alien this close counts as "pressing"
+	const float fence_break_secs = 1.0f;          //hold time before it splinters
+	for(unsigned int i = 0; i < props.size(); i++)
+	{
+		const Prop& f = props[i];
+		if(f.type != PropFence || !f.active) continue;
+
+		bool touched = false;
+		for(unsigned int j = 0; j < sprites.size() && !touched; j++)
+		{
+			if(sprites[j].type != Enemy) continue;
+			float dx = sprites[j].x - f.x;
+			float dz = sprites[j].y - f.z;
+			if(dx * dx + dz * dz < fence_touch_sqr) touched = true;
+		}
+
+		if(touched)
+		{
+			f.damage_timer += dt;
+			if(f.damage_timer >= fence_break_secs)
+				f.active = false; //gap opens, aliens can now walk through
+		}
+		else
+		{
+			f.damage_timer = 0.0f; //must be continuous contact
+		}
+	}
+
+	//--- cow wander: each cow picks a small random target and ambles toward it ---
+	const float cow_speed       = 0.45f;
+	const float cow_arrive_sqr  = 0.18f * 0.18f;
+	const float cow_wander_rng  = 1.6f; //max offset per pick
+	for(unsigned int i = 0; i < props.size(); i++)
+	{
+		const Prop& c = props[i];
+		if(c.type != PropCow || !c.active) continue;
+
+		float dx = c.wander_x - c.x;
+		float dz = c.wander_y - c.z;
+		float d_sqr = dx * dx + dz * dz;
+
+		if(!c.wander_init || d_sqr < cow_arrive_sqr)
+		{
+			//new random nearby target; clamp to map so we never aim off-grid
+			float ox = ((std::rand() % 200) - 100) / 100.0f * cow_wander_rng;
+			float oz = ((std::rand() % 200) - 100) / 100.0f * cow_wander_rng;
+			c.wander_x = c.x + ox;
+			c.wander_y = c.z + oz;
+			c.wander_init = true;
+			dx = c.wander_x - c.x;
+			dz = c.wander_y - c.z;
+			d_sqr = dx * dx + dz * dz;
+		}
+
+		float d = sqrtf(d_sqr);
+		if(d > 0.01f)
+		{
+			c.yaw = atan2f(dx, dz);
+			float step = cow_speed * dt;
+			float nx = c.x + (dx / d) * step;
+			float nz = c.z + (dz / d) * step;
+
+			//skip self in collision so the cow doesn't block itself
+			c.active = false;
+			bool blocked_x = is_blocked(nx, c.z, 0.20f);
+			bool blocked_z = is_blocked(c.x, nz, 0.20f);
+			c.active = true;
+
+			if(!blocked_x) c.x = nx;
+			if(!blocked_z) c.z = nz;
+
+			//if we hit something on either axis, drop the current target so we pick a new one
+			if(blocked_x || blocked_z) c.wander_init = false;
+		}
 	}
 }
 
