@@ -291,6 +291,7 @@ Renderer::Renderer(Player* p, Map* ma, Menu* me)
       u_alien_cam_pos(-1), u_alien_fog_color(-1), u_alien_fog_density(-1),
       alien_body_mesh_a(), alien_body_mesh_b(), alien_head_mesh(),
       tree_mesh(), cow_mesh(), barn_mesh(), fence_mesh(), grass_mesh(), beam_mesh(),
+      shotgun_mesh(), muzzle_flash_mesh(), explosion_mesh(), ufo_mesh(),
       sprite_program(0), solid_program(0), quad_vao(0), quad_vbo(0),
       sprites_texture(0), sprites_tile_count(0),
       u_sprite_model(-1), u_sprite_proj(-1), u_sprite_uvrect(-1),
@@ -416,6 +417,10 @@ bool Renderer::init_alien_resources()
     build_fence_section(fence_mesh);fence_mesh.upload();
     build_grass_tuft(grass_mesh);   grass_mesh.upload();
     build_light_beam(beam_mesh);    beam_mesh.upload();
+    build_shotgun(shotgun_mesh);              shotgun_mesh.upload();
+    build_muzzle_flash(muzzle_flash_mesh);    muzzle_flash_mesh.upload();
+    build_alien_explosion(explosion_mesh);    explosion_mesh.upload();
+    build_ufo(ufo_mesh);                      ufo_mesh.upload();
 
     std::cout << "alien body verts: " << alien_body_mesh_a.vertex_count
               << ", head: " << alien_head_mesh.vertex_count
@@ -734,7 +739,8 @@ void Renderer::draw_sprites_3d(const glm::mat4& view, const glm::mat4& proj, flo
     for(unsigned int i = 0; i < sprites.size(); i++)
     {
         const Sprite& s = sprites[i];
-        if(s.type == Enemy) continue; //enemies render as 3D alien meshes, not billboards
+        if(s.type == Enemy) continue;     //enemies render as 3D alien meshes
+        if(s.type == Temporary) continue; //explosions render as 3D meshes in draw_explosions_3d
         float world_size = s.size / 600.0f;
         if(world_size <= 0) continue;
 
@@ -867,10 +873,38 @@ void Renderer::draw_decorations(const glm::mat4& view, const glm::mat4& proj)
     for(unsigned int i = 0; i < props.size(); i++)
     {
         const Prop& p = props[i];
-        if(!p.active) continue; //abducted cows / inactive props skip rendering
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(p.x, 0.0f, p.z));
-        if(p.yaw != 0.0f)
-            model = glm::rotate(model, p.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        if(!p.active) continue;
+
+        glm::mat4 model;
+
+        if(p.type == PropBeam)
+        {
+            //slant the abduction beam so it connects the cow on the ground to the UFO above
+            glm::vec3 base(p.x, 0.0f, p.z);
+            glm::vec3 ufo(map->ufo_x, UFO_ALTITUDE, map->ufo_z);
+            glm::vec3 dir = ufo - base;
+            float len = glm::length(dir);
+            if(len < 0.001f) continue;
+            glm::vec3 dirn = dir / len;
+
+            //rotate mesh local +Y to align with dirn (using axis-angle from cross product)
+            glm::mat4 rot(1.0f);
+            float cs = glm::clamp(dirn.y, -1.0f, 1.0f); //dot of (0,1,0) and dirn
+            if(cs < 0.9999f)
+            {
+                glm::vec3 axis = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), dirn));
+                rot = glm::rotate(glm::mat4(1.0f), acosf(cs), axis);
+            }
+            //stretch Y so the 4.4-unit-tall beam reaches exactly the UFO
+            glm::mat4 scl = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, len / 4.4f, 1.0f));
+            model = glm::translate(glm::mat4(1.0f), base) * rot * scl;
+        }
+        else
+        {
+            model = glm::translate(glm::mat4(1.0f), glm::vec3(p.x, 0.0f, p.z));
+            if(p.yaw != 0.0f)
+                model = glm::rotate(model, p.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        }
         glUniformMatrix4fv(u_alien_model, 1, GL_FALSE, glm::value_ptr(model));
 
         const Mesh* m = NULL;
@@ -882,10 +916,77 @@ void Renderer::draw_decorations(const glm::mat4& view, const glm::mat4& proj)
             case PropTree:  m = &tree_mesh;  break;
             case PropGrass: m = &grass_mesh; break;
             case PropBeam:  m = &beam_mesh;  break;
+            case PropUFO:   m = &ufo_mesh;   break;
         }
         if(!m) continue;
         glBindVertexArray(m->vao);
         glDrawArrays(GL_TRIANGLES, 0, m->vertex_count);
+    }
+    glBindVertexArray(0);
+}
+
+void Renderer::draw_player_weapon(const glm::mat4& view, const glm::mat4& proj,
+                                  const glm::vec3& cam_pos, float yaw, float pitch)
+{
+    //build a camera-attached basis so the gun rides with the camera (yaw + pitch)
+    glm::vec3 forward(cosf(pitch) * cosf(yaw), sinf(pitch), cosf(pitch) * sinf(yaw));
+    glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+    glm::vec3 up    = glm::cross(right, forward);
+
+    //offset the gun down-right-forward from the camera (hip-fire pose)
+    glm::vec3 gun_pos = cam_pos + forward * 0.40f + right * 0.22f - up * 0.22f;
+
+    //model matrix whose local +X=right, +Y=up, +Z=forward axes match the camera basis
+    glm::mat4 gun_model(1.0f);
+    gun_model[0] = glm::vec4(right,   0.0f);
+    gun_model[1] = glm::vec4(up,      0.0f);
+    gun_model[2] = glm::vec4(forward, 0.0f);
+    gun_model[3] = glm::vec4(gun_pos, 1.0f);
+
+    glUseProgram(alien_program);
+    glUniformMatrix4fv(u_alien_view, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(u_alien_proj, 1, GL_FALSE, glm::value_ptr(proj));
+    glUniform3f(u_alien_light_dir, -0.35f, -0.85f, -0.40f);
+    glUniformMatrix4fv(u_alien_model, 1, GL_FALSE, glm::value_ptr(gun_model));
+    glBindVertexArray(shotgun_mesh.vao);
+    glDrawArrays(GL_TRIANGLES, 0, shotgun_mesh.vertex_count);
+
+    //muzzle flash: only on the frame the player just fired
+    if(player->display_flash)
+    {
+        //flash sits at the barrel tip (gun local (0, 0.05, 0.58))
+        glm::vec4 muzzle_local(0.0f, 0.05f, 0.58f, 1.0f);
+        glm::vec4 muzzle_world = gun_model * muzzle_local;
+        glm::mat4 flash_model = gun_model;
+        flash_model[3] = muzzle_world;
+        glUniformMatrix4fv(u_alien_model, 1, GL_FALSE, glm::value_ptr(flash_model));
+        glBindVertexArray(muzzle_flash_mesh.vao);
+        glDrawArrays(GL_TRIANGLES, 0, muzzle_flash_mesh.vertex_count);
+    }
+    glBindVertexArray(0);
+}
+
+void Renderer::draw_explosions_3d(const glm::mat4& view, const glm::mat4& proj)
+{
+    const std::vector<Sprite>& sprites = map->get_sprites();
+    if(sprites.empty()) return;
+
+    glUseProgram(alien_program);
+    glUniformMatrix4fv(u_alien_view, 1, GL_FALSE, glm::value_ptr(view));
+    glUniformMatrix4fv(u_alien_proj, 1, GL_FALSE, glm::value_ptr(proj));
+    glUniform3f(u_alien_light_dir, -0.35f, -0.85f, -0.40f);
+
+    for(unsigned int i = 0; i < sprites.size(); i++)
+    {
+        const Sprite& s = sprites[i];
+        if(s.type != Temporary) continue;
+        //sprite.size grows ~15 per frame from 400 - drive the explosion scale from it
+        float scale = (float)s.size / 600.0f;
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(s.x, 0.6f, s.y));
+        model = glm::scale(model, glm::vec3(scale));
+        glUniformMatrix4fv(u_alien_model, 1, GL_FALSE, glm::value_ptr(model));
+        glBindVertexArray(explosion_mesh.vao);
+        glDrawArrays(GL_TRIANGLES, 0, explosion_mesh.vertex_count);
     }
     glBindVertexArray(0);
 }
@@ -965,25 +1066,19 @@ void Renderer::draw_in_game_hud()
     int cx = screen_w / 2;
     int cy = screen_h / 2;
 
-    int weapon_x = cx - 60;
-    int weapon_y = screen_h - 400;
-    if(player->display_flash)
-        draw_sprite_tile(sprites_texture, sprites_tile_count, 3, weapon_x, weapon_y, 400, true);
-    draw_sprite_tile(sprites_texture, sprites_tile_count, 0, weapon_x, weapon_y, 400, true);
+    //weapon + muzzle flash are rendered in 3D in draw_player_weapon now
 
+    //crosshair
     float ch_thickness = 2, ch_len = 10;
     draw_solid_quad(cx - ch_len, cy - ch_thickness/2, ch_len*2, ch_thickness, 0, 1, 1, 1);
     draw_solid_quad(cx - ch_thickness/2, cy - ch_len, ch_thickness, ch_len*2, 0, 1, 1, 1);
 
+    //health bar
     float bar_x = 8, bar_y = screen_h - 58, bar_w = 256, bar_h = 50;
     draw_solid_quad(bar_x, bar_y, bar_w, bar_h, 30/255.f, 0, 0, 1);
     float hp_w = bar_w * (player->health / 100.0f);
     if(hp_w < 0) hp_w = 0;
     draw_solid_quad(bar_x, bar_y, hp_w, bar_h, 200/255.f, 30/255.f, 30/255.f, 1);
-
-    for(int i = 0; i < player->key_count; i++)
-        draw_sprite_tile(sprites_texture, sprites_tile_count, 5,
-                         10 + i * 100, screen_h - 150, 100, true);
 }
 
 void Renderer::draw_main_menu()
@@ -1126,6 +1221,13 @@ void Renderer::draw(uint fps)
 
     //3D aliens - enemies rendered as procedural mesh
     draw_aliens_3d(view, proj);
+
+    //3D explosions for dead aliens (Temporary sprites with growing size)
+    draw_explosions_3d(view, proj);
+
+    //first-person weapon - only while actively playing
+    if(menu->current == None)
+        draw_player_weapon(view, proj, cam_pos, yaw, pitch_rad);
 
     //=== 2D UI ===
     glDisable(GL_DEPTH_TEST);

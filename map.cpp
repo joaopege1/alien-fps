@@ -143,7 +143,9 @@ void Map::spawn_alien_at_edge()
 			case 3: sx = (float)w - 0.8f; sy = 1.0f + (std::rand() % (h - 2)); break; //E
 		}
 		ok = true;
-		for(unsigned int j = 0; j < sprites.size(); j++)
+		//don't land on top of a tree, barn, fence, etc.
+		if(is_blocked(sx, sy, 0.30f, false)) ok = false;
+		for(unsigned int j = 0; j < sprites.size() && ok; j++)
 		{
 			if(sprites[j].type != Enemy) continue;
 			float dx = sprites[j].x - sx;
@@ -169,12 +171,13 @@ void Map::spawn_alien_at_edge()
 	s.head_yaw_init  = true;
 }
 
-bool Map::is_blocked(float wx, float wz, float player_radius) const
+bool Map::is_blocked(float wx, float wz, float player_radius, bool ignore_cows) const
 {
 	for(unsigned int i = 0; i < props.size(); i++)
 	{
 		const Prop& p = props[i];
 		if(!p.solid || !p.active) continue;
+		if(ignore_cows && p.type == PropCow) continue;
 		//treat each prop's footprint as axis-aligned; ignore yaw for simplicity in draft
 		float dx = fabsf(wx - p.x);
 		float dz = fabsf(wz - p.z);
@@ -204,7 +207,13 @@ void Map::populate_farm()
 
 	//cow pen: a fenced rectangle south of the barn
 	float pen_cx = fcx, pen_cz = fcz + 5.0f;
-	float pen_w = 9.0f, pen_d = 7.0f;
+	float pen_w = 10.0f, pen_d = 8.0f; //~+27% area for more cow wandering room
+
+	//remember the UFO position so the renderer can slant abduction beams up to it
+	ufo_x = pen_cx;
+	ufo_z = pen_cz;
+	//UFO prop (mesh self-elevates to UFO_ALTITUDE, no collision)
+	props.push_back(Prop(ufo_x, ufo_z, 0.0f, PropUFO, 0.0f, 0.0f, false));
 	//fence sections along the 4 edges (each section is 1m wide; we tile them)
 	int n_x = (int)pen_w; //~5 sections along X
 	int n_z = (int)pen_d; //~4 sections along Z
@@ -494,39 +503,57 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 			}
 			if(abducted) continue; //skip rest of AI for this alien
 
-			//--- pick target: player if close, else nearest cow (fallback: player) ---
+			//--- pick LOOK target (head + game logic): player if close, else nearest cow ---
 			float dx_p = player_x - s.x;
 			float dz_p = player_y - s.y;
 			float dist_p_sqr = dx_p * dx_p + dz_p * dz_p;
 
-			float tx, ty;
+			float look_x, look_y;
 			if(dist_p_sqr < chase_dist_sqr)
 			{
-				tx = player_x;
-				ty = player_y;
+				look_x = player_x;
+				look_y = player_y;
 			}
 			else
 			{
 				float best = 1.0e9f;
-				tx = player_x; ty = player_y; //fallback if no cows
+				look_x = player_x; look_y = player_y;
 				for(unsigned int j = 0; j < props.size(); j++)
 				{
 					if(props[j].type != PropCow) continue;
 					float dx = props[j].x - s.x;
 					float dz = props[j].z - s.y;
 					float dd = dx * dx + dz * dz;
-					if(dd < best) { best = dd; tx = props[j].x; ty = props[j].z; }
+					if(dd < best) { best = dd; look_x = props[j].x; look_y = props[j].z; }
 				}
 			}
 
-			s.target_x = tx;
-			s.target_y = ty;
+			s.target_x = look_x;
+			s.target_y = look_y;
 			s.target_init = true;
 
-			//--- rotate body to face the target, walk forward when aligned ---
-			float dx = tx - s.x;
-			float dz = ty - s.y;
+			//--- pick WALK target: detour override if stuck, otherwise same as look ---
+			float walk_x, walk_y;
+			if(s.detour_timer > 0.0f)
+			{
+				s.detour_timer -= dt;
+				walk_x = s.detour_x;
+				walk_y = s.detour_y;
+			}
+			else
+			{
+				walk_x = look_x;
+				walk_y = look_y;
+			}
+
+			//--- rotate body toward walk target, step when aligned ---
+			float dx = walk_x - s.x;
+			float dz = walk_y - s.y;
 			float d_target = sqrtf(dx * dx + dz * dz);
+
+			float pre_x = s.x;
+			float pre_y = s.y;
+			bool tried_to_move = false;
 
 			if(d_target > 0.001f)
 			{
@@ -545,21 +572,43 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 				bool aligned = fabsf(diff) < align_threshold;
 				if(aligned && d_target > stop_dist)
 				{
+					tried_to_move = true;
 					float step = speed * dt;
 					float nx = s.x + (dx / d_target) * step;
 					float ny = s.y + (dz / d_target) * step;
-					//aliens now respect fences/barn/trees - they'll pile up at the pen
-					//(small radius so they can squeeze close enough for the beam)
 					if(!is_blocked(nx, s.y, 0.18f)) s.x = nx;
 					if(!is_blocked(s.x, ny, 0.18f)) s.y = ny;
 				}
 			}
 
-			//keep aliens inside the playable area so ushort() never exceeds w/h
+			//keep aliens inside the playable area
 			if(s.x < 0.5f)       s.x = 0.5f;
 			if(s.x > w - 0.51f)  s.x = w - 0.51f;
 			if(s.y < 0.5f)       s.y = 0.5f;
 			if(s.y > h - 0.51f)  s.y = h - 0.51f;
+
+			//--- stuck detection: if we tried to move but barely budged, accumulate
+			//time; after 2s, pick a random detour for ~1.5s to slip past whatever's
+			//blocking (typically a tree right between alien and cow)
+			float moved_sqr = (s.x - pre_x) * (s.x - pre_x) + (s.y - pre_y) * (s.y - pre_y);
+			float expected_step = speed * dt;
+			if(tried_to_move && moved_sqr < expected_step * expected_step * 0.10f)
+			{
+				s.stuck_timer += dt;
+				if(s.stuck_timer >= 2.0f && s.detour_timer <= 0.0f)
+				{
+					float ang = (std::rand() % 360) * (float)M_PI / 180.0f;
+					float r   = 2.5f + (std::rand() % 200) / 100.0f; //2.5 - 4.5 units
+					s.detour_x = s.x + cosf(ang) * r;
+					s.detour_y = s.y + sinf(ang) * r;
+					s.detour_timer = 1.5f;
+					s.stuck_timer  = 0.0f;
+				}
+			}
+			else
+			{
+				s.stuck_timer = 0.0f;
+			}
 		}
 		else if(sprites.at(i).type == Temporary)
 		{
@@ -594,8 +643,10 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 	}
 
 	//--- fence break: each fence section accumulates damage while an alien is pressing on it ---
-	const float fence_touch_sqr = 0.55f * 0.55f; //alien this close counts as "pressing"
-	const float fence_break_secs = 1.0f;          //hold time before it splinters
+	//compare alien against the fence's AABB (not just the center) so touching a corner counts
+	const float fence_pad     = 0.30f; //how close to the AABB edge the alien needs to be
+	const float fence_pad_sqr = fence_pad * fence_pad;
+	const float fence_break_secs = 1.0f;
 	for(unsigned int i = 0; i < props.size(); i++)
 	{
 		const Prop& f = props[i];
@@ -605,9 +656,16 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 		for(unsigned int j = 0; j < sprites.size() && !touched; j++)
 		{
 			if(sprites[j].type != Enemy) continue;
-			float dx = sprites[j].x - f.x;
-			float dz = sprites[j].y - f.z;
-			if(dx * dx + dz * dz < fence_touch_sqr) touched = true;
+			//closest point on the fence AABB to the alien
+			float cx = sprites[j].x;
+			float cz = sprites[j].y;
+			float min_x = f.x - f.half_w, max_x = f.x + f.half_w;
+			float min_z = f.z - f.half_d, max_z = f.z + f.half_d;
+			if(cx < min_x) cx = min_x; else if(cx > max_x) cx = max_x;
+			if(cz < min_z) cz = min_z; else if(cz > max_z) cz = max_z;
+			float dx = sprites[j].x - cx;
+			float dz = sprites[j].y - cz;
+			if(dx * dx + dz * dz < fence_pad_sqr) touched = true;
 		}
 
 		if(touched)

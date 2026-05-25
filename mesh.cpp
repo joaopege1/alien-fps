@@ -278,3 +278,112 @@ void build_light_beam(Mesh& m)
     //inner brighter core
     add_box(m, glm::vec3(0.0f, 2.20f, 0.0f), glm::vec3(0.20f, 4.40f, 0.20f), BEAM_CORE);
 }
+
+//--- shotgun (first-person), built with +Z pointing down the barrel ---
+void build_shotgun(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 METAL (0.18f, 0.18f, 0.20f); //dark gunmetal
+    const glm::vec3 WOOD  (0.30f, 0.18f, 0.08f); //walnut
+    const glm::vec3 SIGHT (0.85f, 0.85f, 0.85f); //bright front sight
+    const glm::vec3 SKIN  (0.84f, 0.63f, 0.49f); //tanned farmer skin
+    const glm::vec3 SHIRT (0.48f, 0.14f, 0.12f); //red flannel work shirt sleeve
+
+    //barrel (long, slim, +Z direction)
+    add_box(m, glm::vec3(0.0f, 0.05f, 0.30f), glm::vec3(0.045f, 0.045f, 0.55f), METAL);
+    //receiver (center of gun)
+    add_box(m, glm::vec3(0.0f, 0.04f, 0.0f), glm::vec3(0.065f, 0.10f, 0.16f), METAL);
+    //pump / fore-end grip below the barrel
+    add_box(m, glm::vec3(0.0f, -0.03f, 0.16f), glm::vec3(0.075f, 0.07f, 0.18f), WOOD);
+    //trigger guard
+    add_box(m, glm::vec3(0.0f, -0.05f, -0.04f), glm::vec3(0.045f, 0.03f, 0.04f), METAL);
+    //pistol grip (angled down behind receiver)
+    add_box(m, glm::vec3(0.0f, -0.13f, -0.06f), glm::vec3(0.05f, 0.13f, 0.07f), WOOD);
+    //stock (extends back)
+    add_box(m, glm::vec3(0.0f, -0.06f, -0.24f), glm::vec3(0.05f, 0.085f, 0.22f), WOOD);
+    //front sight (tiny bump on barrel tip)
+    add_box(m, glm::vec3(0.0f, 0.085f, 0.555f), glm::vec3(0.012f, 0.025f, 0.012f), SIGHT);
+
+    //--- farmer's left arm reaching across to grip the barrel ---
+    //hand wraps the barrel mid-length (skin)
+    add_box(m, glm::vec3(-0.02f, 0.015f, 0.36f), glm::vec3(0.090f, 0.085f, 0.15f), SKIN);
+    //wrist coming in from the left, slightly below the barrel
+    add_box(m, glm::vec3(-0.11f, -0.03f, 0.26f), glm::vec3(0.080f, 0.080f, 0.10f), SKIN);
+    //forearm extending diagonally back-left toward the player's shoulder (still skin - sleeve is rolled up)
+    add_box(m, glm::vec3(-0.18f, -0.09f, 0.13f), glm::vec3(0.085f, 0.085f, 0.20f), SKIN);
+    //tip of the red flannel sleeve where it disappears behind the camera
+    add_box(m, glm::vec3(-0.22f, -0.14f, -0.02f), glm::vec3(0.095f, 0.095f, 0.10f), SHIRT);
+}
+
+//--- muzzle flash (rendered for one frame at the gun muzzle when firing) ---
+void build_muzzle_flash(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 CORE  (1.00f, 0.95f, 0.70f); //bright near-white
+    const glm::vec3 OUTER (1.00f, 0.55f, 0.10f); //hot orange
+    const glm::vec3 EMBER (1.00f, 0.30f, 0.05f); //red-orange tips
+
+    add_sphere(m, glm::vec3(0.0f, 0.0f, 0.0f), 0.09f, OUTER, 6);
+    add_sphere(m, glm::vec3(0.0f, 0.0f, 0.0f), 0.06f, CORE,  6);
+    //small spiky outer specks for an irregular flash silhouette
+    add_box(m, glm::vec3( 0.10f, 0.0f, 0.04f), glm::vec3(0.06f, 0.025f, 0.025f), EMBER);
+    add_box(m, glm::vec3(-0.10f, 0.0f, 0.04f), glm::vec3(0.06f, 0.025f, 0.025f), EMBER);
+    add_box(m, glm::vec3( 0.0f, 0.10f, 0.04f), glm::vec3(0.025f, 0.06f, 0.025f), EMBER);
+    add_box(m, glm::vec3( 0.0f,-0.10f, 0.04f), glm::vec3(0.025f, 0.06f, 0.025f), EMBER);
+}
+
+//altitude at which the saucer hovers in world space (mesh-relative)
+const float UFO_ALTITUDE = 13.0f;
+
+//flying saucer hovering above the cow pen. classic disc with green underside lights
+void build_ufo(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 HULL  (0.16f, 0.16f, 0.18f); //dark metal
+    const glm::vec3 BEVEL (0.28f, 0.28f, 0.32f); //lighter accent
+    const glm::vec3 DOME  (0.55f, 0.65f, 0.78f); //cool silver-blue
+    const glm::vec3 LIGHT (0.45f, 1.00f, 0.50f); //bright alien green - matches the beam
+
+    const float Y = UFO_ALTITUDE;
+
+    //main saucer disc - wide flat box
+    add_box(m, glm::vec3(0.0f, Y,        0.0f), glm::vec3(3.6f, 0.45f, 3.6f), HULL);
+    //chamfered upper bevel
+    add_box(m, glm::vec3(0.0f, Y + 0.35f, 0.0f), glm::vec3(2.8f, 0.30f, 2.8f), BEVEL);
+    //dome base
+    add_box(m, glm::vec3(0.0f, Y + 0.65f, 0.0f), glm::vec3(1.5f, 0.20f, 1.5f), BEVEL);
+    //dome (cockpit)
+    add_sphere(m, glm::vec3(0.0f, Y + 1.10f, 0.0f), 0.80f, DOME, 10);
+    //lower bevel for the rim
+    add_box(m, glm::vec3(0.0f, Y - 0.20f, 0.0f), glm::vec3(3.0f, 0.20f, 3.0f), BEVEL);
+    //underside light ring (8 glowing nodes)
+    for(int i = 0; i < 8; i++)
+    {
+        float ang = (float)i * 2.0f * (float)M_PI / 8.0f;
+        float r = 1.55f;
+        add_sphere(m, glm::vec3(cosf(ang) * r, Y - 0.35f, sinf(ang) * r), 0.18f, LIGHT, 5);
+    }
+}
+
+//--- alien gore explosion: bursts of green chunks around a smoky core ---
+//drawn for a Temporary sprite; the sprite's growing `size` field scales the whole burst
+void build_alien_explosion(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 GORE_BRIGHT(0.40f, 0.95f, 0.25f); //alien blood
+    const glm::vec3 GORE_DARK  (0.18f, 0.50f, 0.12f); //deeper green
+    const glm::vec3 SMOKE      (0.10f, 0.10f, 0.10f);
+
+    //central smoke puff
+    add_sphere(m, glm::vec3(0.0f, 0.0f, 0.0f), 0.18f, SMOKE, 6);
+    //6 chunks radiating outward (alien chest height assumed baked in by the call site)
+    add_sphere(m, glm::vec3( 0.22f, 0.0f, 0.0f),  0.08f, GORE_BRIGHT, 5);
+    add_sphere(m, glm::vec3(-0.22f, 0.0f, 0.0f),  0.08f, GORE_BRIGHT, 5);
+    add_sphere(m, glm::vec3( 0.0f, 0.0f,  0.22f), 0.08f, GORE_BRIGHT, 5);
+    add_sphere(m, glm::vec3( 0.0f, 0.0f, -0.22f), 0.08f, GORE_BRIGHT, 5);
+    add_sphere(m, glm::vec3( 0.0f, 0.20f, 0.0f),  0.07f, GORE_BRIGHT, 5);
+    add_sphere(m, glm::vec3( 0.0f,-0.18f, 0.0f),  0.07f, GORE_DARK,   5);
+    //diagonal speckles
+    add_sphere(m, glm::vec3( 0.15f, 0.12f, 0.10f), 0.05f, GORE_DARK, 4);
+    add_sphere(m, glm::vec3(-0.14f, 0.10f,-0.13f), 0.05f, GORE_DARK, 4);
+}

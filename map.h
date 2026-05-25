@@ -27,6 +27,12 @@ struct Sprite
 	mutable float target_x = 0;
 	mutable float target_y = 0;
 	mutable bool  target_init = false;
+	//stuck detection + detour: if the alien tried to move but barely budged for 2s
+	//we route it to a random nearby point for ~1.5s to dislodge it from a tree etc.
+	mutable float stuck_timer  = 0;
+	mutable float detour_timer = 0;
+	mutable float detour_x     = 0;
+	mutable float detour_y     = 0;
 
 	bool operator < (const Sprite& s) const
 	{
@@ -39,7 +45,8 @@ struct Sprite
 	           head_yaw(0), head_yaw_init(false),
 	           body_yaw(0), body_yaw_init(false),
 	           prev_x(0), prev_y(0), prev_init(false),
-	           target_x(0), target_y(0), target_init(false) {}
+	           target_x(0), target_y(0), target_init(false),
+	           stuck_timer(0), detour_timer(0), detour_x(0), detour_y(0) {}
 };
 
 struct Door
@@ -51,7 +58,7 @@ struct Door
 };
 
 //world props (3D meshes), drawn by the renderer and queried for collision
-enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass, PropBeam };
+enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass, PropBeam, PropUFO };
 
 struct Prop
 {
@@ -91,11 +98,18 @@ class Map
 		int   spawned_count  = 0;
 		float next_spawn_in  = 3.0f; //seconds until next spawn
 		float spawn_interval = 3.5f; //seconds between spawns
+
+		//UFO hovering above the cow pen; set by populate_farm. queried by the
+		//renderer so abduction beams can slant up to it.
+		float ufo_x = 0;
+		float ufo_z = 0;
 		
 		char get_tile(unsigned short x, unsigned short y);
 		void set_tile(unsigned short x, unsigned short y, char tile);
 		const std::vector<Prop>& get_props() const { return props; }
-		bool is_blocked(float wx, float wz, float player_radius = 0.25f) const;
+		//ignore_cows: pass true when the player asks - cows are visual only against the
+		//player so a wandering cow can't pin them in place
+		bool is_blocked(float wx, float wz, float player_radius = 0.25f, bool ignore_cows = false) const;
 		int  get_cow_count() const; //counts active cows (used for HUD + lose condition)
 		void populate_farm(); //hardcoded barn + cow pen + procedural trees/grass scatter
 		void spawn_alien_at_edge(); //pops a fresh enemy at a random map edge

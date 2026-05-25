@@ -125,9 +125,9 @@ void Player::handle_events(float dt)
 
     if(int(nx) >= 0 && int(nx) < map->w && int(ny) >= 0 && int(ny) < map->h)
     {
-        if(map->get_tile(ushort(nx), ushort(y)) == ' ' && !map->is_blocked(nx, y))
+        if(map->get_tile(ushort(nx), ushort(y)) == ' ' && !map->is_blocked(nx, y, 0.25f, true))
             x = nx;
-        if(map->get_tile(ushort(x), ushort(ny)) == ' ' && !map->is_blocked(x, ny))
+        if(map->get_tile(ushort(x), ushort(ny)) == ' ' && !map->is_blocked(x, ny, 0.25f, true))
             y = ny;
     }
 }

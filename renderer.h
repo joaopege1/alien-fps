@@ -43,6 +43,9 @@ class Renderer
         void draw_sky(float pitch_rad);
         void draw_sprites_3d(const glm::mat4& view, const glm::mat4& proj, float yaw);
         void draw_decorations(const glm::mat4& view, const glm::mat4& proj);
+        void draw_player_weapon(const glm::mat4& view, const glm::mat4& proj,
+                                const glm::vec3& cam_pos, float yaw, float pitch);
+        void draw_explosions_3d(const glm::mat4& view, const glm::mat4& proj);
 
         //--- 2D draw helpers ---
         void draw_textured_quad(GLuint tex, float x, float y, float w, float h,
@@ -147,6 +150,10 @@ class Renderer
         Mesh fence_mesh;
         Mesh grass_mesh;
         Mesh beam_mesh;
+        Mesh shotgun_mesh;
+        Mesh muzzle_flash_mesh;
+        Mesh explosion_mesh;
+        Mesh ufo_mesh;
 
         //--- 2D pipeline ---
         GLuint sprite_program;

@@ -41,4 +41,14 @@ void build_fence_section(Mesh& m);
 void build_grass_tuft(Mesh& m);
 void build_light_beam(Mesh& m);
 
+//first-person weapon + effects, built in local space with +Z = barrel direction
+void build_shotgun(Mesh& m);
+void build_muzzle_flash(Mesh& m);
+void build_alien_explosion(Mesh& m);
+
+//flying saucer hovering above the cow pen. mesh is self-elevating so a Prop at
+//(x, _, z) renders the disc at altitude UFO_ALTITUDE below.
+void build_ufo(Mesh& m);
+extern const float UFO_ALTITUDE;
+
 #endif
