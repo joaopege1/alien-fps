@@ -37,6 +37,7 @@ void build_alien_head(Mesh& m);
 void build_tree(Mesh& m);
 void build_cow(Mesh& m);
 void build_barn(Mesh& m);
+void build_shop(Mesh& m);
 void build_fence_section(Mesh& m);
 void build_grass_tuft(Mesh& m);
 void build_light_beam(Mesh& m);

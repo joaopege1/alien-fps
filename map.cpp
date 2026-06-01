@@ -116,6 +116,74 @@ Map::Map() : speed(1.2), damage(0), enemy_count(0), map(NULL), dist(NULL),
 	update_dist_map(2, 2);
 }
 
+bool Map::try_buy_cow()
+{
+	if(get_cow_count() >= max_cows) return false;
+	const float cow_min_gap_sqr = 1.4f * 1.4f;
+	for(int tries = 0; tries < 40; tries++)
+	{
+		float cx = pen_cx + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_w - 1.2f);
+		float cz = pen_cz + ((std::rand() % 100) / 100.0f - 0.5f) * (pen_d - 1.2f);
+		bool ok = true;
+		for(unsigned int j = 0; j < props.size(); j++)
+		{
+			if(props[j].type != PropCow || !props[j].active) continue;
+			float dx = props[j].x - cx;
+			float dz = props[j].z - cz;
+			if(dx * dx + dz * dz < cow_min_gap_sqr) { ok = false; break; }
+		}
+		if(!ok) continue;
+		float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
+		props.push_back(Prop(cx, cz, yaw, PropCow, 0.38f, 0.68f, true));
+		return true;
+	}
+	return false; //couldn't find a free spot, treat as fail
+}
+
+void Map::upgrade_pen()
+{
+	//deactivate all existing fence sections (they'll sit unused in the props vector)
+	for(unsigned int i = 0; i < props.size(); i++)
+		if(props[i].type == PropFence) props[i].active = false;
+
+	//grow the pen
+	pen_w += 2.0f;
+	pen_d += 1.5f;
+	pen_upgrades++;
+	max_cows += 2;
+
+	//rebuild fences around the new perimeter
+	int n_x = (int)pen_w;
+	int n_z = (int)pen_d;
+	float left   = pen_cx - pen_w * 0.5f;
+	float right  = pen_cx + pen_w * 0.5f;
+	float top    = pen_cz - pen_d * 0.5f;
+	float bottom = pen_cz + pen_d * 0.5f;
+	for(int i = 0; i < n_x; i++)
+	{
+		float fx = left + 0.5f + i;
+		props.push_back(Prop(fx, top,    0.0f,                 PropFence, 0.5f, 0.06f, true));
+		props.push_back(Prop(fx, bottom, 0.0f,                 PropFence, 0.5f, 0.06f, true));
+	}
+	for(int i = 0; i < n_z; i++)
+	{
+		float fz = top + 0.5f + i;
+		props.push_back(Prop(left,  fz, (float)M_PI * 0.5f, PropFence, 0.06f, 0.5f, true));
+		props.push_back(Prop(right, fz, (float)M_PI * 0.5f, PropFence, 0.06f, 0.5f, true));
+	}
+}
+
+void Map::repair_fences()
+{
+	for(unsigned int i = 0; i < props.size(); i++)
+	{
+		const Prop& p = props[i];
+		if(p.type != PropFence) continue;
+		p.active = true;
+		p.damage_timer = 0.0f;
+	}
+}
+
 int Map::get_cow_count() const
 {
 	int n = 0;
@@ -197,6 +265,11 @@ void Map::populate_farm()
 	spawned_count  = 0;
 	next_spawn_in  = 3.0f;
 
+	//day/night cycle starts on day 1
+	is_day        = true;
+	day_number    = 1;
+	day_timer     = day_length;
+
 	//--- the farm (near center of the field so the player can reach it from spawn) ---
 	float fcx = w * 0.5f; //farm center x
 	float fcz = h * 0.45f; //slightly north of center
@@ -205,15 +278,25 @@ void Map::populate_farm()
 	float barn_x = fcx, barn_z = fcz - 6.0f;
 	props.push_back(Prop(barn_x, barn_z, 0.0f, PropBarn, 3.5f, 4.5f, true));
 
-	//cow pen: a fenced rectangle south of the barn
-	float pen_cx = fcx, pen_cz = fcz + 5.0f;
-	float pen_w = 10.0f, pen_d = 8.0f; //~+27% area for more cow wandering room
+	//cow pen: a fenced rectangle south of the barn (stored on Map for upgrades)
+	pen_cx = fcx;
+	pen_cz = fcz + 5.0f;
+	pen_w  = 10.0f;
+	pen_d  = 8.0f;
 
 	//remember the UFO position so the renderer can slant abduction beams up to it
 	ufo_x = pen_cx;
 	ufo_z = pen_cz;
 	//UFO prop (mesh self-elevates to UFO_ALTITUDE, no collision)
 	props.push_back(Prop(ufo_x, ufo_z, 0.0f, PropUFO, 0.0f, 0.0f, false));
+
+	//shop sits well away from the farm so the round trip eats into the 2-minute
+	//day - that's part of the difficulty. clamp to stay on the map.
+	shop_x = fcx + 22.0f;
+	shop_z = fcz + 4.0f;
+	if(shop_x > w - 4.0f) shop_x = w - 4.0f;
+	if(shop_z > h - 4.0f) shop_z = h - 4.0f;
+	props.push_back(Prop(shop_x, shop_z, 0.0f, PropShop, 1.8f, 1.8f, true));
 	//fence sections along the 4 edges (each section is 1m wide; we tile them)
 	int n_x = (int)pen_w; //~5 sections along X
 	int n_z = (int)pen_d; //~4 sections along Z
@@ -275,9 +358,11 @@ void Map::populate_farm()
 			tz = (std::rand() % (h - 1)) + 0.5f;
 			float dx_farm = tx - fcx,    dz_farm = tz - fcz;
 			float dx_spawn = tx - spawn_x, dz_spawn = tz - spawn_z;
+			float dx_shop = tx - shop_x,   dz_shop = tz - shop_z;
 			bool near_farm  = (dx_farm  * dx_farm  + dz_farm  * dz_farm)  < farm_radius_sqr;
 			bool near_spawn = (dx_spawn * dx_spawn + dz_spawn * dz_spawn) < spawn_radius_sqr;
-			if(!near_farm && !near_spawn) break;
+			bool near_shop  = (dx_shop  * dx_shop  + dz_shop  * dz_shop)  < 25.0f; //r=5
+			if(!near_farm && !near_spawn && !near_shop) break;
 		} while(++tries < 20);
 		float yaw = (std::rand() % 360) * (float)M_PI / 180.0f;
 		props.push_back(Prop(tx, tz, yaw, PropTree, 0.35f, 0.35f, true));
@@ -459,8 +544,23 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 	const float chase_dist_sqr  = chase_dist * chase_dist;
 	const float stop_dist       = 0.6f;  //don't slide into the target's center
 
-	//--- tick the spawn timer; pop new aliens at the edges over time ---
-	if(spawned_count < wave_size)
+	//--- day / night cycle ---
+	if(is_day)
+	{
+		day_timer -= dt;
+		if(day_timer <= 0.0f)
+		{
+			//night begins
+			is_day        = false;
+			day_timer     = 0.0f;
+			spawned_count = 0;
+			next_spawn_in = 3.0f;
+			enemy_count   = wave_size;
+		}
+	}
+
+	//--- tick the spawn timer; pop new aliens at the edges over time (night only) ---
+	if(!is_day && spawned_count < wave_size)
 	{
 		next_spawn_in -= dt;
 		if(next_spawn_in <= 0.0f)
@@ -469,6 +569,19 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 			spawned_count++;
 			next_spawn_in = spawn_interval;
 		}
+	}
+
+	//--- night ends when the whole wave is dead ---
+	if(!is_day && enemy_count <= 0 && spawned_count >= wave_size)
+	{
+		is_day      = true;
+		day_number += 1;
+		wave_size  += 2;
+		day_timer   = day_length;
+		//cows sell their milk overnight - payday at dawn
+		int income          = get_cow_count() * coins_per_cow_per_day;
+		coins              += income;
+		total_coins_earned += income;
 	}
 
 	const float abduct_dist_sqr = 1.6f * 1.6f; //alien close enough to suck the cow up with the beam (over the fence)
@@ -626,11 +739,13 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 		props.push_back(beam);
 	}
 
-	//erase consumed aliens in descending order so earlier indices stay valid
+	//erase consumed aliens in descending order so earlier indices stay valid.
+	//abducted aliens DO count as kills for the leaderboard - they're off the field.
 	for(int k = (int)aliens_to_remove.size() - 1; k >= 0; k--)
 	{
 		delete_sprite(aliens_to_remove[k]);
 		enemy_count--;
+		total_aliens_killed++;
 	}
 
 	//tick prop expirations (currently only beams have lifetimes)
@@ -672,7 +787,20 @@ void Map::update_sprites(float player_x, float player_y, float dt)
 		{
 			f.damage_timer += dt;
 			if(f.damage_timer >= fence_break_secs)
+			{
 				f.active = false; //gap opens, aliens can now walk through
+				//propagate fatigue to nearby fence sections so the gap widens
+				//easily when pressure continues - fixes "alien stuck on edge"
+				for(unsigned int k = 0; k < props.size(); k++)
+				{
+					const Prop& n = props[k];
+					if(n.type != PropFence || !n.active) continue;
+					float dx = n.x - f.x;
+					float dz = n.z - f.z;
+					if(dx * dx + dz * dz < 2.5f * 2.5f) //within ~2 sections
+						n.damage_timer = fence_break_secs * 0.65f; //pre-fatigued
+				}
+			}
 		}
 		else
 		{

@@ -244,6 +244,33 @@ void build_barn(Mesh& m)
     add_box(m, glm::vec3(0.0f, 4.92f,-4.51f), glm::vec3(7.05f, 0.18f, 0.04f), TRIM);
 }
 
+void build_shop(Mesh& m)
+{
+    m.clear();
+    const glm::vec3 WALL  (0.35f, 0.45f, 0.55f); //blue-gray paint
+    const glm::vec3 TRIM  (0.85f, 0.78f, 0.65f); //wood trim
+    const glm::vec3 ROOF  (0.18f, 0.16f, 0.14f); //dark roof shingles
+    const glm::vec3 DOOR  (0.30f, 0.18f, 0.08f); //wood door
+    const glm::vec3 WINDOW(0.55f, 0.75f, 0.85f); //glass / light from inside
+    const glm::vec3 SIGN  (0.80f, 0.55f, 0.15f); //wooden sign
+
+    //main building body
+    add_box(m, glm::vec3(0.0f, 1.20f, 0.0f), glm::vec3(3.6f, 2.40f, 3.20f), WALL);
+    //trim band along the bottom
+    add_box(m, glm::vec3(0.0f, 0.15f, 0.0f), glm::vec3(3.65f, 0.30f, 3.25f), TRIM);
+    //sloped roof - flat box overhang
+    add_box(m, glm::vec3(0.0f, 2.55f, 0.0f), glm::vec3(3.90f, 0.25f, 3.50f), ROOF);
+    add_box(m, glm::vec3(0.0f, 2.80f, 0.0f), glm::vec3(3.30f, 0.30f, 2.90f), ROOF);
+    add_box(m, glm::vec3(0.0f, 3.05f, 0.0f), glm::vec3(2.50f, 0.30f, 2.10f), ROOF);
+    //front door (+Z face)
+    add_box(m, glm::vec3(0.0f, 0.85f, 1.62f), glm::vec3(0.90f, 1.65f, 0.04f), DOOR);
+    //two windows beside the door (warm glow)
+    add_box(m, glm::vec3(-1.20f, 1.45f, 1.62f), glm::vec3(0.60f, 0.55f, 0.04f), WINDOW);
+    add_box(m, glm::vec3( 1.20f, 1.45f, 1.62f), glm::vec3(0.60f, 0.55f, 0.04f), WINDOW);
+    //small wooden sign over the door
+    add_box(m, glm::vec3(0.0f, 2.20f, 1.65f), glm::vec3(1.40f, 0.35f, 0.06f), SIGN);
+}
+
 void build_fence_section(Mesh& m)
 {
     m.clear();

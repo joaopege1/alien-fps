@@ -26,6 +26,10 @@ class Renderer
         Renderer(const Renderer& r) = delete;
         Renderer& operator=(const Renderer& r) = delete;
 
+        //called on SDL_WINDOWEVENT_SIZE_CHANGED so UI re-anchors and the viewport
+        //matches the new framebuffer size
+        void on_window_resize(int new_w, int new_h);
+
     private:
         //--- init helpers ---
         bool init_gl_resources();
@@ -64,6 +68,7 @@ class Renderer
         void draw_help_menu();
         void draw_game_over();
         void draw_win_menu();
+        void draw_shop_menu();
 
         SDL_Window* window;
         SDL_GLContext gl_context;
@@ -73,6 +78,7 @@ class Renderer
 
         TTF_Font* font_big;
         TTF_Font* font_medium;
+        TTF_Font* font_hud; //10% smaller than font_medium, used by in-game HUD
 
         //--- 3D walls ---
         GLuint wall_program;
@@ -129,6 +135,8 @@ class Renderer
         GLuint sky_vao;
         GLuint sky_vbo;
         GLint u_sky_pitch;
+        GLint u_sky_day;
+        GLint u_floor_day;
 
         //--- 3D aliens (vertex-colored mesh, replaces enemy billboards) ---
         GLuint alien_program;
@@ -154,6 +162,7 @@ class Renderer
         Mesh muzzle_flash_mesh;
         Mesh explosion_mesh;
         Mesh ufo_mesh;
+        Mesh shop_mesh;
 
         //--- 2D pipeline ---
         GLuint sprite_program;

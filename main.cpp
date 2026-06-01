@@ -60,6 +60,26 @@ int main()
 
             map.update_sprites(player.get_x(), player.get_y(), dt);
         }
+        else if(menu.current == Shop)
+        {
+            //consume shop click flags - each action has a price
+            if(menu.shop_repair_pressed) {
+                menu.shop_repair_pressed = false;
+                if(map.coins >= 15) { map.coins -= 15; map.repair_fences(); }
+            }
+            if(menu.shop_heal_pressed) {
+                menu.shop_heal_pressed = false;
+                if(map.coins >= 20) { map.coins -= 20; player.health = 100; }
+            }
+            if(menu.shop_buy_cow_pressed) {
+                menu.shop_buy_cow_pressed = false;
+                if(map.coins >= 50 && map.try_buy_cow()) { map.coins -= 50; }
+            }
+            if(menu.shop_upgrade_pen_pressed) {
+                menu.shop_upgrade_pen_pressed = false;
+                if(map.coins >= 200) { map.coins -= 200; map.upgrade_pen(); }
+            }
+        }
         else if(menu.current == Main)
         {
             map.damage = menu.difficulty == 0 ? 1 : (menu.difficulty == 1 ? 3 : 6);

@@ -58,7 +58,7 @@ struct Door
 };
 
 //world props (3D meshes), drawn by the renderer and queried for collision
-enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass, PropBeam, PropUFO };
+enum PropType { PropBarn, PropCow, PropFence, PropTree, PropGrass, PropBeam, PropUFO, PropShop };
 
 struct Prop
 {
@@ -99,10 +99,34 @@ class Map
 		float next_spawn_in  = 3.0f; //seconds until next spawn
 		float spawn_interval = 3.5f; //seconds between spawns
 
+		//run stats - shown on the game over screen
+		int   total_aliens_killed = 0;
+		int   total_coins_earned  = 0; //lifetime, never spent down
+
+		//economy
+		int   coins        = 30;      //starting capital
+		int   max_cows     = 6;       //pen capacity, grows with upgrades
+		int   pen_upgrades = 0;       //counter for game over stat
+		int   coins_per_cow_per_day = 10;
+
+		//day / night cycle
+		bool  is_day         = true;
+		int   day_number     = 1;
+		float day_timer      = 120.0f; //seconds remaining in current day
+		float day_length     = 120.0f;
+
 		//UFO hovering above the cow pen; set by populate_farm. queried by the
 		//renderer so abduction beams can slant up to it.
 		float ufo_x = 0;
 		float ufo_z = 0;
+		//shop building - queried by player for interaction range + renderer for prompt
+		float shop_x = 0;
+		float shop_z = 0;
+		//cow pen geometry - needed to spawn new cows and to rebuild on upgrade
+		float pen_cx = 0;
+		float pen_cz = 0;
+		float pen_w  = 10.0f;
+		float pen_d  = 8.0f;
 		
 		char get_tile(unsigned short x, unsigned short y);
 		void set_tile(unsigned short x, unsigned short y, char tile);
@@ -113,6 +137,9 @@ class Map
 		int  get_cow_count() const; //counts active cows (used for HUD + lose condition)
 		void populate_farm(); //hardcoded barn + cow pen + procedural trees/grass scatter
 		void spawn_alien_at_edge(); //pops a fresh enemy at a random map edge
+		void repair_fences();       //bring every fence section back online
+		bool try_buy_cow();         //add a cow inside the pen if there's room; returns success
+		void upgrade_pen();         //grow pen, rebuild fences, raise max_cows
 		void sort_sprites(float player_x, float player_y); //sorts sprites in the vector based on the distance from the player
 		std::vector<Sprite> const& get_sprites();
 		void delete_sprite(unsigned short id); //deletes sprite at specified index in the vector

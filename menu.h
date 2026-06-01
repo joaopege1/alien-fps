@@ -7,7 +7,7 @@
 #include "timer.h"
 #include "leaderboard.h"
 
-enum CurrentMenu {None, Main, Pause, GameOver, Win, Help};
+enum CurrentMenu {None, Main, Pause, GameOver, Win, Help, Shop};
 enum Difficulty {Easy, Normal, Hard};
 enum SoundVolume {NoSound, LowSound, NormalSound};
 
@@ -24,7 +24,12 @@ class Menu
         SoundVolume sound = LowSound;
         Timer timer;
         Leaderboard leaderboard;
-        Button buttons[9]; //UI buttons
+        Button buttons[14]; //UI buttons
+        //shop state - extra signals the renderer/player flip on click
+        bool shop_repair_pressed     = false;
+        bool shop_heal_pressed       = false;
+        bool shop_buy_cow_pressed    = false;
+        bool shop_upgrade_pen_pressed = false;
 
         ~Menu();
 

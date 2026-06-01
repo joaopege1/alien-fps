@@ -65,8 +65,28 @@ void Player::handle_events(float dt)
             {
                 if(menu->current == None)
                     menu->current = Pause;
-                else if(menu->current == Pause)
+                else if(menu->current == Pause || menu->current == Shop)
                     menu->current = None;
+            }
+
+            //E near the shop during day opens it
+            if(event.key.keysym.sym == SDLK_e && menu->current == None && map->is_day)
+            {
+                float dx = x - map->shop_x;
+                float dz = y - map->shop_z;
+                if(dx * dx + dz * dz < 16.0f) //within 4 units of shop entrance
+                    menu->current = Shop;
+            }
+
+            //F11 toggles fullscreen
+            if(event.key.keysym.sym == SDLK_F11)
+            {
+                SDL_Window* win = SDL_GL_GetCurrentWindow();
+                Uint32 flags = SDL_GetWindowFlags(win);
+                if(flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
+                    SDL_SetWindowFullscreen(win, 0);
+                else
+                    SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
             }
 
             //quits the game if the player is dead and presses Space or Escape
@@ -190,12 +210,8 @@ void Player::Fire()
                         map->sort_sprites(x, y);
 
                         map->enemy_count--;
-                        if(map->enemy_count < 1)
-                        {
-                            menu->timer.stop();
-                            menu->current = Win;
-                            menu->leaderboard.add_score(menu->timer.get_time());
-                        }
+                        map->total_aliens_killed++;
+                        //no win condition - the run is endless, stats show up on game over
                         break;
                     } 
                 }

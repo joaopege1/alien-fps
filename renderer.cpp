@@ -99,6 +99,7 @@ uniform vec4 u_color;
 uniform vec3 u_cam_pos;
 uniform vec3 u_fog_color;
 uniform float u_fog_density;
+uniform float u_day_factor;
 out vec4 frag_color;
 
 float hash(vec2 p) {
@@ -117,18 +118,32 @@ float noise2d(vec2 p) {
 }
 
 void main() {
-    //multi-scale noise to fake a grass field at night
+    //multi-scale noise to fake a grass field
     float n_large = noise2d(v_world_pos.xz * 5.0);
     float n_fine  = noise2d(v_world_pos.xz * 22.0);
     float n = n_large * 0.65 + n_fine * 0.35;
 
-    vec3 grass_dark  = vec3(0.05, 0.08, 0.04);
-    vec3 grass_light = vec3(0.13, 0.19, 0.09);
+    //3-stop palette so the ground also fades through a dusky sunset
+    vec3 grass_dark_n  = vec3(0.05, 0.08, 0.04);
+    vec3 grass_dark_s  = vec3(0.18, 0.15, 0.08);
+    vec3 grass_dark_d  = vec3(0.20, 0.35, 0.15);
+    vec3 grass_light_n = vec3(0.13, 0.19, 0.09);
+    vec3 grass_light_s = vec3(0.40, 0.30, 0.18);
+    vec3 grass_light_d = vec3(0.42, 0.58, 0.22);
+
+    vec3 grass_dark  = (u_day_factor > 0.5) ? mix(grass_dark_s,  grass_dark_d,  (u_day_factor - 0.5) * 2.0)
+                                            : mix(grass_dark_n,  grass_dark_s,  u_day_factor * 2.0);
+    vec3 grass_light = (u_day_factor > 0.5) ? mix(grass_light_s, grass_light_d, (u_day_factor - 0.5) * 2.0)
+                                            : mix(grass_light_n, grass_light_s, u_day_factor * 2.0);
     vec3 c = mix(grass_dark, grass_light, n);
 
-    //occasional dirt patches where noise is very low
+    //occasional dirt patches
     if(n < 0.18) {
-        vec3 dirt = vec3(0.07, 0.06, 0.04);
+        vec3 dirt_n = vec3(0.07, 0.06, 0.04);
+        vec3 dirt_s = vec3(0.30, 0.20, 0.10);
+        vec3 dirt_d = vec3(0.40, 0.30, 0.18);
+        vec3 dirt = (u_day_factor > 0.5) ? mix(dirt_s, dirt_d, (u_day_factor - 0.5) * 2.0)
+                                         : mix(dirt_n, dirt_s, u_day_factor * 2.0);
         c = mix(dirt, c, n / 0.18);
     }
 
@@ -155,18 +170,38 @@ static const char* sky_fragment_src = R"(
 #version 330 core
 in vec2 v_uv;
 uniform float u_pitch_shift;
+uniform float u_day_factor; //0 = full night, 0.5 = sunset, 1 = full day
 out vec4 frag_color;
+
+vec3 lerp3(vec3 a, vec3 b, vec3 c, float t) {
+    return (t > 0.5) ? mix(b, c, (t - 0.5) * 2.0)
+                     : mix(a, b, t * 2.0);
+}
+
 void main() {
     float t = clamp(v_uv.y + u_pitch_shift, 0.0, 1.0);
-    vec3 horizon = vec3(0.10, 0.13, 0.22);   // dim blue-gray at horizon
-    vec3 mid     = vec3(0.05, 0.07, 0.16);   // deep navy
-    vec3 zenith  = vec3(0.01, 0.02, 0.07);   // near-black with blue tint
-    vec3 sky = (t < 0.5)
-        ? mix(horizon, mid, t * 2.0)
-        : mix(mid, zenith, (t - 0.5) * 2.0);
-    // soft moonglow near the horizon
+
+    //3-stop palette through sunset for a smooth transition
+    vec3 horizon = lerp3(vec3(0.10, 0.13, 0.22),
+                         vec3(0.95, 0.50, 0.20),
+                         vec3(0.85, 0.90, 0.95), u_day_factor);
+    vec3 mid     = lerp3(vec3(0.05, 0.07, 0.16),
+                         vec3(0.70, 0.35, 0.30),
+                         vec3(0.55, 0.75, 0.95), u_day_factor);
+    vec3 zenith  = lerp3(vec3(0.01, 0.02, 0.07),
+                         vec3(0.30, 0.18, 0.30),
+                         vec3(0.30, 0.55, 0.85), u_day_factor);
+
+    vec3 sky = (t < 0.5) ? mix(horizon, mid, t * 2.0)
+                         : mix(mid, zenith, (t - 0.5) * 2.0);
+
+    //horizon glow: moonlight blue -> warm sunset -> bright sun
     float glow = exp(-abs(v_uv.y - (0.5 - u_pitch_shift)) * 5.0);
-    sky = mix(sky, vec3(0.35, 0.40, 0.55), glow * 0.18);
+    vec3 glow_col = lerp3(vec3(0.35, 0.40, 0.55),
+                          vec3(1.00, 0.55, 0.25),
+                          vec3(1.00, 0.95, 0.80), u_day_factor);
+    sky = mix(sky, glow_col, glow * 0.22);
+
     frag_color = vec4(sky, 1.0);
 }
 )";
@@ -269,7 +304,7 @@ void main() {
 
 Renderer::Renderer(Player* p, Map* ma, Menu* me)
     : window(NULL), gl_context(NULL), screen_w(0), screen_h(0),
-      font_big(NULL), font_medium(NULL),
+      font_big(NULL), font_medium(NULL), font_hud(NULL),
       wall_program(0), wall_vao(0), wall_vbo(0), wall_vertex_count(0),
       wall_texture(0), wall_tile_count(0), u_view_loc(-1), u_proj_loc(-1),
       u_wall_light_pos(-1), u_wall_light_dir(-1), u_wall_ambient(-1),
@@ -285,13 +320,13 @@ Renderer::Renderer(Player* p, Map* ma, Menu* me)
       u_sprite_light_pos(-1), u_sprite_light_dir(-1), u_sprite_ambient(-1),
       u_sprite_cone_cos(-1), u_sprite_light_range(-1),
       u_sprite3d_cam_pos(-1), u_sprite3d_fog_color(-1), u_sprite3d_fog_density(-1),
-      sky_program(0), sky_vao(0), sky_vbo(0), u_sky_pitch(-1),
+      sky_program(0), sky_vao(0), sky_vbo(0), u_sky_pitch(-1), u_sky_day(-1), u_floor_day(-1),
       alien_program(0), u_alien_model(-1), u_alien_view(-1),
       u_alien_proj(-1), u_alien_light_dir(-1),
       u_alien_cam_pos(-1), u_alien_fog_color(-1), u_alien_fog_density(-1),
       alien_body_mesh_a(), alien_body_mesh_b(), alien_head_mesh(),
       tree_mesh(), cow_mesh(), barn_mesh(), fence_mesh(), grass_mesh(), beam_mesh(),
-      shotgun_mesh(), muzzle_flash_mesh(), explosion_mesh(), ufo_mesh(),
+      shotgun_mesh(), muzzle_flash_mesh(), explosion_mesh(), ufo_mesh(), shop_mesh(),
       sprite_program(0), solid_program(0), quad_vao(0), quad_vbo(0),
       sprites_texture(0), sprites_tile_count(0),
       u_sprite_model(-1), u_sprite_proj(-1), u_sprite_uvrect(-1),
@@ -316,7 +351,7 @@ bool Renderer::init_sdl(const char* title, ushort width, ushort height)
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
     window = SDL_CreateWindow(title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                              width, height, SDL_WINDOW_OPENGL);
+                              width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if(!window) { std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl; return false; }
 
     gl_context = SDL_GL_CreateContext(window);
@@ -341,9 +376,10 @@ bool Renderer::init_sdl(const char* title, ushort width, ushort height)
     glEnable(GL_DEPTH_TEST);
 
     TTF_Init();
-    font_big = TTF_OpenFont("pixelz.ttf", 100);
+    font_big    = TTF_OpenFont("pixelz.ttf", 100);
     font_medium = TTF_OpenFont("pixelz.ttf", 60);
-    if(!font_big || !font_medium) { std::cerr << "Couldn't load ttf: " << SDL_GetError() << std::endl; return false; }
+    font_hud    = TTF_OpenFont("pixelz.ttf", 54); //10% smaller than font_medium for in-game HUD
+    if(!font_big || !font_medium || !font_hud) { std::cerr << "Couldn't load ttf: " << SDL_GetError() << std::endl; return false; }
 
     return init_gl_resources();
 }
@@ -421,6 +457,7 @@ bool Renderer::init_alien_resources()
     build_muzzle_flash(muzzle_flash_mesh);    muzzle_flash_mesh.upload();
     build_alien_explosion(explosion_mesh);    explosion_mesh.upload();
     build_ufo(ufo_mesh);                      ufo_mesh.upload();
+    build_shop(shop_mesh);                    shop_mesh.upload();
 
     std::cout << "alien body verts: " << alien_body_mesh_a.vertex_count
               << ", head: " << alien_head_mesh.vertex_count
@@ -451,6 +488,7 @@ bool Renderer::init_3d_extras()
         u_floor_cam_pos     = glGetUniformLocation(solid3d_program, "u_cam_pos");
         u_floor_fog_color   = glGetUniformLocation(solid3d_program, "u_fog_color");
         u_floor_fog_density = glGetUniformLocation(solid3d_program, "u_fog_density");
+        u_floor_day         = glGetUniformLocation(solid3d_program, "u_day_factor");
     }
     build_floor_mesh();
 
@@ -493,6 +531,7 @@ bool Renderer::init_3d_extras()
         glDeleteShader(vs); glDeleteShader(fs);
         if(!sky_program) return false;
         u_sky_pitch = glGetUniformLocation(sky_program, "u_pitch_shift");
+        u_sky_day   = glGetUniformLocation(sky_program, "u_day_factor");
     }
     float sky_quad[] = {
         -1.f, -1.f,
@@ -712,8 +751,15 @@ void Renderer::draw_sky(float pitch_rad)
     float shift = pitch_rad * 0.35f;
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
+    //match the same day_factor curve used for fog/floor
+    float sky_day;
+    if(!map->is_day)                sky_day = 0.0f;
+    else if(map->day_timer > 30.0f) sky_day = 1.0f;
+    else                            sky_day = map->day_timer / 30.0f;
+
     glUseProgram(sky_program);
     glUniform1f(u_sky_pitch, shift);
+    glUniform1f(u_sky_day,   sky_day);
     glBindVertexArray(sky_vao);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
@@ -874,6 +920,7 @@ void Renderer::draw_decorations(const glm::mat4& view, const glm::mat4& proj)
     {
         const Prop& p = props[i];
         if(!p.active) continue;
+        if(p.type == PropUFO && map->is_day) continue; //UFO only shows up at night
 
         glm::mat4 model;
 
@@ -917,12 +964,21 @@ void Renderer::draw_decorations(const glm::mat4& view, const glm::mat4& proj)
             case PropGrass: m = &grass_mesh; break;
             case PropBeam:  m = &beam_mesh;  break;
             case PropUFO:   m = &ufo_mesh;   break;
+            case PropShop:  m = &shop_mesh;  break;
         }
         if(!m) continue;
         glBindVertexArray(m->vao);
         glDrawArrays(GL_TRIANGLES, 0, m->vertex_count);
     }
     glBindVertexArray(0);
+}
+
+void Renderer::on_window_resize(int new_w, int new_h)
+{
+    if(new_w <= 0 || new_h <= 0) return;
+    screen_w = (ushort)new_w;
+    screen_h = (ushort)new_h;
+    glViewport(0, 0, screen_w, screen_h);
 }
 
 void Renderer::draw_player_weapon(const glm::mat4& view, const glm::mat4& proj,
@@ -1066,8 +1122,6 @@ void Renderer::draw_in_game_hud()
     int cx = screen_w / 2;
     int cy = screen_h / 2;
 
-    //weapon + muzzle flash are rendered in 3D in draw_player_weapon now
-
     //crosshair
     float ch_thickness = 2, ch_len = 10;
     draw_solid_quad(cx - ch_len, cy - ch_thickness/2, ch_len*2, ch_thickness, 0, 1, 1, 1);
@@ -1079,6 +1133,47 @@ void Renderer::draw_in_game_hud()
     float hp_w = bar_w * (player->health / 100.0f);
     if(hp_w < 0) hp_w = 0;
     draw_solid_quad(bar_x, bar_y, hp_w, bar_h, 200/255.f, 30/255.f, 30/255.f, 1);
+
+    //"Press E to enter shop" prompt when day and near shop
+    if(map->is_day)
+    {
+        float dx = player->get_x() - map->shop_x;
+        float dz = player->get_y() - map->shop_z;
+        if(dx * dx + dz * dz < 16.0f)
+            draw_text(cx - 200, screen_h - 220, "Press E to enter the shop", font_medium, ttf_color_banana);
+    }
+}
+
+void Renderer::draw_shop_menu()
+{
+    //dim overlay
+    draw_solid_quad(0, 0, screen_w, screen_h, 0, 0, 0, 0.55f);
+
+    draw_text(440, 80, "SHOP", font_big, ttf_color_banana);
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "$ %d in your pocket", map->coins);
+    draw_text(390, 180, buf, font_medium, ttf_color_white);
+
+    //affordability decides label color
+    auto color_for = [&](int cost) {
+        return (map->coins >= cost) ? ttf_color_banana : ttf_color_red;
+    };
+
+    snprintf(buf, sizeof(buf), "Repair All Fences  - $15");
+    draw_text(380, 255, buf, font_medium, menu->check_hover(9)  ? color_for(15) : ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "Restore Health     - $20");
+    draw_text(380, 325, buf, font_medium, menu->check_hover(10) ? color_for(20) : ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "Buy a Cow (%d/%d)   - $50", map->get_cow_count(), map->max_cows);
+    draw_text(380, 395, buf, font_medium, menu->check_hover(11) ? color_for(50) : ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "Upgrade Pen (+2)   - $200");
+    draw_text(380, 465, buf, font_medium, menu->check_hover(12) ? color_for(200) : ttf_color_white);
+
+    draw_text(380, 565, "Close (Esc)", font_medium,
+              menu->check_hover(13) ? ttf_color_banana : ttf_color_white);
 }
 
 void Renderer::draw_main_menu()
@@ -1123,7 +1218,25 @@ void Renderer::draw_help_menu()
 
 void Renderer::draw_game_over()
 {
-    draw_text(380, 200, "GAME OVER", font_big, ttf_color_red);
+    draw_text(380, 80, "GAME OVER", font_big, ttf_color_red);
+
+    char buf[80];
+    snprintf(buf, sizeof(buf), "Day %d reached", map->day_number);
+    draw_text(460, 220, buf, font_medium, ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "%d aliens killed", map->total_aliens_killed);
+    draw_text(460, 280, buf, font_medium, ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "%d cows in the pen", map->get_cow_count());
+    draw_text(460, 340, buf, font_medium, ttf_color_banana);
+
+    snprintf(buf, sizeof(buf), "%d pen upgrades", map->pen_upgrades);
+    draw_text(460, 400, buf, font_medium, ttf_color_white);
+
+    snprintf(buf, sizeof(buf), "$ %d total earned", map->total_coins_earned);
+    draw_text(460, 460, buf, font_medium, ttf_color_banana);
+
+    draw_text(380, 580, "Press SPACE to quit", font_medium, ttf_color_white);
 }
 
 void Renderer::draw_win_menu()
@@ -1144,6 +1257,12 @@ void Renderer::draw_win_menu()
 
 void Renderer::draw(uint fps)
 {
+    //track window size each frame so resize / fullscreen toggles just work
+    int cur_w = 0, cur_h = 0;
+    SDL_GetWindowSize(window, &cur_w, &cur_h);
+    if(cur_w != screen_w || cur_h != screen_h)
+        on_window_resize(cur_w, cur_h);
+
     //rebuild wall mesh if any tile changed (doors opened, rocks shot)
     if(map->dirty)
     {
@@ -1173,9 +1292,20 @@ void Renderer::draw(uint fps)
     glm::mat4 view = glm::lookAt(cam_pos, cam_pos + forward, up_vec);
     glm::mat4 proj = glm::perspective(fov, (float)screen_w / (float)screen_h, 0.05f, 200.0f);
 
-    //shared fog parameters for all 3D shaders
-    const glm::vec3 fog_color(0.08f, 0.10f, 0.16f); //matches the sky horizon
-    const float fog_density = 0.035f;
+    //day -> sunset -> night phase, smooth over the last 30s of each day
+    float day_factor;
+    if(!map->is_day)                    day_factor = 0.0f;
+    else if(map->day_timer > 30.0f)     day_factor = 1.0f;
+    else                                day_factor = map->day_timer / 30.0f;
+
+    //fog goes through a warm dusk color too (3-stop lerp)
+    const glm::vec3 night_fog (0.08f, 0.10f, 0.16f);
+    const glm::vec3 sunset_fog(0.55f, 0.32f, 0.24f);
+    const glm::vec3 day_fog   (0.78f, 0.83f, 0.88f);
+    glm::vec3 fog_color = (day_factor > 0.5f)
+        ? sunset_fog + (day_fog    - sunset_fog) * ((day_factor - 0.5f) * 2.0f)
+        : night_fog  + (sunset_fog - night_fog ) * (day_factor * 2.0f);
+    const float fog_density = 0.035f - 0.022f * day_factor; //~0.013 in daytime
 
     //floor
     glUseProgram(solid3d_program);
@@ -1185,6 +1315,7 @@ void Renderer::draw(uint fps)
     glUniform3f(u_floor_cam_pos, cam_pos.x, cam_pos.y, cam_pos.z);
     glUniform3f(u_floor_fog_color, fog_color.r, fog_color.g, fog_color.b);
     glUniform1f(u_floor_fog_density, fog_density);
+    glUniform1f(u_floor_day, day_factor);
     glBindVertexArray(floor_vao);
     glDrawArrays(GL_TRIANGLES, 0, floor_vertex_count);
     glBindVertexArray(0);
@@ -1234,17 +1365,38 @@ void Renderer::draw(uint fps)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    if(menu->current == None)
+    if(menu->current == None || menu->current == Shop)
     {
         draw_in_game_hud();
         std::string fps_text = std::to_string(fps) + " FPS";
-        std::string score_text = std::to_string(map->enemy_count) + " aliens left - " +
-                                 menu->timer.get_time_string();
-        std::string cow_text   = std::to_string(map->get_cow_count()) + " cows left";
-        draw_text(10, 10, score_text, font_medium, ttf_color_white);
-        draw_text(10, 60, fps_text, font_medium, ttf_color_white);
-        draw_text(10, 110, cow_text, font_medium, ttf_color_banana);
-        draw_text(10, screen_h - 130, std::to_string(player->health), font_medium, ttf_color_white);
+
+        std::string phase_text;
+        if(map->is_day)
+        {
+            int sec = (int)map->day_timer;
+            int mm = sec / 60;
+            int ss = sec % 60;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Day %d - %d:%02d left", map->day_number, mm, ss);
+            phase_text = buf;
+        }
+        else
+        {
+            phase_text = "Night " + std::to_string(map->day_number)
+                       + " - " + std::to_string(map->enemy_count) + " aliens left";
+        }
+
+        std::string cow_text   = std::to_string(map->get_cow_count())
+                                + "/" + std::to_string(map->max_cows) + " cows";
+        std::string coins_text = "$ " + std::to_string(map->coins);
+
+        draw_text(10, 10,  phase_text, font_hud, map->is_day ? ttf_color_banana : ttf_color_white);
+        draw_text(10, 55,  fps_text,   font_hud, ttf_color_white);
+        draw_text(10, 100, cow_text,   font_hud, ttf_color_banana);
+        draw_text(10, 145, coins_text, font_hud, ttf_color_banana);
+        draw_text(10, screen_h - 130, std::to_string(player->health), font_hud, ttf_color_white);
+
+        if(menu->current == Shop) draw_shop_menu();
     }
     else if(menu->current == Main)     draw_main_menu();
     else if(menu->current == Pause)    draw_pause_menu();
